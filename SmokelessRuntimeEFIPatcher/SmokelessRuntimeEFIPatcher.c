@@ -24,7 +24,8 @@
 #include "AutoPatcher.h"
 #include "MenuUI.h"
 #include "HiiBrowser.h"
-#define SREP_VERSION L"0.3.0"
+#include "ConfigManager.h"
+#define SREP_VERSION L"0.3.1"
 
 EFI_BOOT_SERVICES *_gBS = NULL;
 EFI_RUNTIME_SERVICES *_gRS = NULL;
@@ -372,6 +373,16 @@ EFI_STATUS MenuCallback_LaunchSetup(MENU_ITEM *Item, VOID *Context)
 }
 
 /**
+ * Helper: Wait for key press
+ */
+VOID WaitForKey(VOID)
+{
+    EFI_INPUT_KEY Key;
+    gBS->WaitForEvent(1, &gST->ConIn->WaitForKey, NULL);
+    gST->ConIn->ReadKeyStroke(gST->ConIn, &Key);
+}
+
+/**
  * Callback: About dialog
  */
 EFI_STATUS MenuCallback_About(MENU_ITEM *Item, VOID *Context)
@@ -380,9 +391,170 @@ EFI_STATUS MenuCallback_About(MENU_ITEM *Item, VOID *Context)
     
     MenuShowMessage(MenuCtx, 
         L"About SREP",
-        L"SmokelessRuntimeEFIPatcher v0.3.0\nInteractive BIOS Patcher"
+        L"SmokelessRuntimeEFIPatcher v0.3.1\n"
+        L"Enhanced with:\n"
+        L"- Auto-Detection & Intelligent Patching\n"
+        L"- Interactive Menu Interface\n"
+        L"- NVRAM Configuration Save/Load\n"
+        L"- Settings Export/Import"
     );
     
+    return EFI_SUCCESS;
+}
+
+/**
+ * Callback: Save configuration to file
+ */
+EFI_STATUS MenuCallback_SaveConfig(MENU_ITEM *Item, VOID *Context)
+{
+    SREP_CONTEXT *SrepCtx = (SREP_CONTEXT *)Context;
+    MENU_CONTEXT *MenuCtx = SrepCtx->MenuContext;
+    CONFIG_MANAGER ConfigMgr;
+    EFI_STATUS Status;
+    BOOLEAN Confirm = FALSE;
+    
+    Print(L"\n=== Save Configuration ===\n\n");
+    
+    // Check if NVRAM manager is initialized
+    if (SrepCtx->NvramManager == NULL) {
+        MenuShowMessage(MenuCtx, L"Error", L"NVRAM manager not initialized. Please load modules first.");
+        return EFI_NOT_READY;
+    }
+    
+    MenuShowConfirm(MenuCtx, L"Save Configuration", 
+                    L"Save current NVRAM settings to SREP_Settings.cfg?", &Confirm);
+    
+    if (!Confirm) {
+        return EFI_SUCCESS;
+    }
+    
+    // Initialize config manager
+    Status = ConfigInitialize(&ConfigMgr);
+    if (EFI_ERROR(Status)) {
+        MenuShowMessage(MenuCtx, L"Error", L"Failed to initialize config manager");
+        return Status;
+    }
+    
+    // Load from NVRAM
+    Status = ConfigLoadFromNvram(&ConfigMgr, SrepCtx->NvramManager);
+    if (EFI_ERROR(Status)) {
+        Print(L"Warning: Could not load from NVRAM: %r\n", Status);
+    }
+    
+    // Save to file
+    Status = ConfigSaveToFile(&ConfigMgr, L"fs0:\\SREP_Settings.cfg");
+    if (EFI_ERROR(Status)) {
+        MenuShowMessage(MenuCtx, L"Error", L"Failed to save configuration file");
+        ConfigCleanup(&ConfigMgr);
+        return Status;
+    }
+    
+    Print(L"\nConfiguration saved successfully!\n");
+    Print(L"File: fs0:\\SREP_Settings.cfg\n");
+    Print(L"Entries: %u\n", ConfigGetEntryCount(&ConfigMgr));
+    
+    MenuShowMessage(MenuCtx, L"Success", L"Configuration saved to SREP_Settings.cfg");
+    
+    ConfigCleanup(&ConfigMgr);
+    return EFI_SUCCESS;
+}
+
+/**
+ * Callback: Load configuration from file
+ */
+EFI_STATUS MenuCallback_LoadConfig(MENU_ITEM *Item, VOID *Context)
+{
+    SREP_CONTEXT *SrepCtx = (SREP_CONTEXT *)Context;
+    MENU_CONTEXT *MenuCtx = SrepCtx->MenuContext;
+    CONFIG_MANAGER ConfigMgr;
+    EFI_STATUS Status;
+    BOOLEAN Confirm = FALSE;
+    
+    Print(L"\n=== Load Configuration ===\n\n");
+    
+    // Check if NVRAM manager is initialized
+    if (SrepCtx->NvramManager == NULL) {
+        MenuShowMessage(MenuCtx, L"Error", L"NVRAM manager not initialized. Please load modules first.");
+        return EFI_NOT_READY;
+    }
+    
+    MenuShowConfirm(MenuCtx, L"Load Configuration",
+                    L"Load settings from SREP_Settings.cfg and apply to NVRAM?", &Confirm);
+    
+    if (!Confirm) {
+        return EFI_SUCCESS;
+    }
+    
+    // Initialize config manager
+    Status = ConfigInitialize(&ConfigMgr);
+    if (EFI_ERROR(Status)) {
+        MenuShowMessage(MenuCtx, L"Error", L"Failed to initialize config manager");
+        return Status;
+    }
+    
+    // Load from file
+    Status = ConfigLoadFromFile(&ConfigMgr, L"fs0:\\SREP_Settings.cfg");
+    if (EFI_ERROR(Status)) {
+        MenuShowMessage(MenuCtx, L"Error", L"Failed to load configuration file");
+        ConfigCleanup(&ConfigMgr);
+        return Status;
+    }
+    
+    Print(L"Configuration loaded from file\n");
+    Print(L"Entries: %u\n", ConfigGetEntryCount(&ConfigMgr));
+    
+    // Apply to NVRAM
+    Status = ConfigApplyToNvram(&ConfigMgr, SrepCtx->NvramManager);
+    if (EFI_ERROR(Status)) {
+        MenuShowMessage(MenuCtx, L"Error", L"Failed to apply configuration to NVRAM");
+        ConfigCleanup(&ConfigMgr);
+        return Status;
+    }
+    
+    MenuShowMessage(MenuCtx, L"Success", L"Configuration loaded and applied to NVRAM");
+    
+    ConfigCleanup(&ConfigMgr);
+    return EFI_SUCCESS;
+}
+
+/**
+ * Callback: Export configuration to text
+ */
+EFI_STATUS MenuCallback_ExportConfig(MENU_ITEM *Item, VOID *Context)
+{
+    SREP_CONTEXT *SrepCtx = (SREP_CONTEXT *)Context;
+    MENU_CONTEXT *MenuCtx = SrepCtx->MenuContext;
+    CONFIG_MANAGER ConfigMgr;
+    EFI_STATUS Status;
+    
+    Print(L"\n=== Export Configuration ===\n\n");
+    
+    // Check if NVRAM manager is initialized
+    if (SrepCtx->NvramManager == NULL) {
+        MenuShowMessage(MenuCtx, L"Error", L"NVRAM manager not initialized. Please load modules first.");
+        return EFI_NOT_READY;
+    }
+    
+    // Initialize config manager
+    Status = ConfigInitialize(&ConfigMgr);
+    if (EFI_ERROR(Status)) {
+        MenuShowMessage(MenuCtx, L"Error", L"Failed to initialize config manager");
+        return Status;
+    }
+    
+    // Load from NVRAM
+    Status = ConfigLoadFromNvram(&ConfigMgr, SrepCtx->NvramManager);
+    if (EFI_ERROR(Status)) {
+        Print(L"Warning: Could not load from NVRAM: %r\n", Status);
+    }
+    
+    // Export to text
+    Status = ConfigExportToText(&ConfigMgr, L"fs0:\\SREP_Export.txt");
+    
+    Print(L"\nPress any key to continue...\n");
+    WaitForKey();
+    
+    ConfigCleanup(&ConfigMgr);
     return EFI_SUCCESS;
 }
 
@@ -409,11 +581,11 @@ EFI_STATUS MenuCallback_Exit(MENU_ITEM *Item, VOID *Context)
  */
 MENU_PAGE *CreateMainMenu(SREP_CONTEXT *SrepCtx)
 {
-    MENU_PAGE *MainMenu = MenuCreatePage(L"SmokelessRuntimeEFIPatcher - Main Menu", 10);
+    MENU_PAGE *MainMenu = MenuCreatePage(L"SmokelessRuntimeEFIPatcher - Main Menu", 15);
     if (MainMenu == NULL)
         return NULL;
     
-    MenuAddInfoItem(MainMenu, 0, L"SREP v0.3.0 - Interactive BIOS Patcher");
+    MenuAddInfoItem(MainMenu, 0, L"SREP v0.3.1 - Interactive BIOS Patcher with Config Save");
     MenuAddSeparator(MainMenu, 1, NULL);
     
     MenuAddActionItem(
@@ -450,12 +622,39 @@ MENU_PAGE *CreateMainMenu(SREP_CONTEXT *SrepCtx)
     
     MenuAddSeparator(MainMenu, 6, NULL);
     
-    MenuAddInfoItem(MainMenu, 7, L"Changes saved to NVRAM persist across reboots");
+    MenuAddActionItem(
+        MainMenu, 7,
+        L"Save Configuration to File",
+        L"Save current NVRAM settings to SREP_Settings.cfg",
+        MenuCallback_SaveConfig,
+        SrepCtx
+    );
     
-    MenuAddSeparator(MainMenu, 8, NULL);
+    MenuAddActionItem(
+        MainMenu, 8,
+        L"Load Configuration from File",
+        L"Load and apply settings from SREP_Settings.cfg",
+        MenuCallback_LoadConfig,
+        SrepCtx
+    );
     
     MenuAddActionItem(
         MainMenu, 9,
+        L"Export Configuration (Text)",
+        L"Export settings in human-readable format",
+        MenuCallback_ExportConfig,
+        SrepCtx
+    );
+    
+    MenuAddSeparator(MainMenu, 10, NULL);
+    
+    MenuAddInfoItem(MainMenu, 11, L"Config files: fs0:\\SREP_Settings.cfg, fs0:\\SREP_Export.txt");
+    MenuAddInfoItem(MainMenu, 12, L"Changes saved to NVRAM persist across reboots");
+    
+    MenuAddSeparator(MainMenu, 13, NULL);
+    
+    MenuAddActionItem(
+        MainMenu, 14,
         L"Exit",
         L"Exit to UEFI Shell or Boot Menu",
         MenuCallback_Exit,
