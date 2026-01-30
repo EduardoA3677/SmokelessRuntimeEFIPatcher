@@ -18,6 +18,7 @@
 #include <Protocol/DisplayProtocol.h>
 #include <Protocol/HiiPopup.h>
 #include <Library/MemoryAllocationLib.h>
+#include "Constants.h"
 #include "Utility.h"
 #include "Opcode.h"
 #include "BiosDetector.h"
@@ -26,12 +27,11 @@
 #include "HiiBrowser.h"
 #include "ConfigManager.h"
 #include "NvramManager.h"
-#define SREP_VERSION L"0.3.1"
 
 EFI_BOOT_SERVICES *_gBS = NULL;
 EFI_RUNTIME_SERVICES *_gRS = NULL;
 EFI_FILE *LogFile = NULL;
-char Log[512];
+char Log[LOG_BUFFER_SIZE];
 enum
 {
     OFFSET = 1,
@@ -395,12 +395,13 @@ EFI_STATUS MenuCallback_About(MENU_ITEM *Item, VOID *Context)
     
     MenuShowMessage(MenuCtx, 
         L"About SREP",
-        L"SmokelessRuntimeEFIPatcher v0.3.1\n"
+        L"SmokelessRuntimeEFIPatcher " SREP_VERSION_STRING L"\n"
         L"Enhanced with:\n"
         L"- Auto-Detection & Intelligent Patching\n"
         L"- Interactive Menu Interface\n"
         L"- Direct BIOS NVRAM Configuration\n"
-        L"- HP AMI BIOS Support"
+        L"- HP AMI BIOS Support\n"
+        L"- Dynamic Form Extraction"
     );
     
     return EFI_SUCCESS;
@@ -555,7 +556,7 @@ EFI_STATUS EFIAPI SREPEntry(IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *Syst
     SREP_CONTEXT SrepCtx;
     MENU_CONTEXT MenuCtx;
     
-    Print(L"Welcome to SREP (Smokeless Runtime EFI Patcher) %s\n\r", SREP_VERSION);
+    Print(L"Welcome to SREP (Smokeless Runtime EFI Patcher) %s\n\r", SREP_VERSION_STRING);
     Print(L"Enhanced with Auto-Detection and Intelligent Patching\n\r");
     
     gBS->SetWatchdogTimer(0, 0, 0, 0);
@@ -564,37 +565,37 @@ EFI_STATUS EFIAPI SREPEntry(IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *Syst
     HandleProtocol(LoadedImage->DeviceHandle, &gEfiSimpleFileSystemProtocolGuid, (void **)&FileSystem);
     FileSystem->OpenVolume(FileSystem, &Root);
 
-    Status = Root->Open(Root, &LogFile, L"SREP.log", EFI_FILE_MODE_WRITE | EFI_FILE_MODE_READ | EFI_FILE_MODE_CREATE, 0);
+    Status = Root->Open(Root, &LogFile, LOG_FILE_NAME, EFI_FILE_MODE_WRITE | EFI_FILE_MODE_READ | EFI_FILE_MODE_CREATE, 0);
     if (Status != EFI_SUCCESS)
     {
         Print(L"Failed on Opening Log File : %r\n\r", Status);
         Root->Close(Root);
         return Status;
     }
-    AsciiSPrint(Log,512,"Welcome to SREP (Smokeless Runtime EFI Patcher) %s\n\r", SREP_VERSION);
+    AsciiSPrint(Log, LOG_BUFFER_SIZE, "Welcome to SREP (Smokeless Runtime EFI Patcher) %s\n\r", SREP_VERSION_STRING);
     LogToFile(LogFile,Log);
-    AsciiSPrint(Log,512,"Enhanced with Auto-Detection and Intelligent Patching\n\r");
+    AsciiSPrint(Log, LOG_BUFFER_SIZE, "Enhanced with Auto-Detection and Intelligent Patching\n\r");
     LogToFile(LogFile,Log);
     
     // Check for interactive mode flag file
     EFI_FILE *InteractiveFlag;
-    Status = Root->Open(Root, &InteractiveFlag, L"SREP_Interactive.flag", EFI_FILE_MODE_READ, 0);
+    Status = Root->Open(Root, &InteractiveFlag, INTERACTIVE_FLAG_FILE, EFI_FILE_MODE_READ, 0);
     if (!EFI_ERROR(Status))
     {
         InteractiveFlag->Close(InteractiveFlag);
         UseInteractiveMode = TRUE;
-        AsciiSPrint(Log,512,"Interactive mode flag found\n\r");
+        AsciiSPrint(Log, LOG_BUFFER_SIZE, "Interactive mode flag found\n\r");
         LogToFile(LogFile,Log);
     }
     
     // Check for auto mode flag
     EFI_FILE *AutoFlag;
-    Status = Root->Open(Root, &AutoFlag, L"SREP_Auto.flag", EFI_FILE_MODE_READ, 0);
+    Status = Root->Open(Root, &AutoFlag, AUTO_MODE_FLAG_FILE, EFI_FILE_MODE_READ, 0);
     if (!EFI_ERROR(Status))
     {
         AutoFlag->Close(AutoFlag);
         UseInteractiveMode = FALSE;
-        AsciiSPrint(Log,512,"Auto mode flag found, skipping interactive menu\n\r");
+        AsciiSPrint(Log, LOG_BUFFER_SIZE, "Auto mode flag found, skipping interactive menu\n\r");
         LogToFile(LogFile,Log);
     }
     else
@@ -606,19 +607,19 @@ EFI_STATUS EFIAPI SREPEntry(IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *Syst
     // Check for BIOS-style tab interface flag
     BOOLEAN UseBiosTabInterface = FALSE;
     EFI_FILE *BiosTabFlag;
-    Status = Root->Open(Root, &BiosTabFlag, L"SREP_BiosTab.flag", EFI_FILE_MODE_READ, 0);
+    Status = Root->Open(Root, &BiosTabFlag, BIOS_TAB_FLAG_FILE, EFI_FILE_MODE_READ, 0);
     if (!EFI_ERROR(Status))
     {
         BiosTabFlag->Close(BiosTabFlag);
         UseBiosTabInterface = TRUE;
-        AsciiSPrint(Log,512,"BIOS-style tab interface mode enabled\n\r");
+        AsciiSPrint(Log, LOG_BUFFER_SIZE, "BIOS-style tab interface mode enabled\n\r");
         LogToFile(LogFile,Log);
     }
     
     // INTERACTIVE MODE: Show menu interface
     if (UseInteractiveMode)
     {
-        AsciiSPrint(Log,512,"\n=== INTERACTIVE MODE: Starting Menu ===\n\r");
+        AsciiSPrint(Log, LOG_BUFFER_SIZE, "\n=== INTERACTIVE MODE: Starting Menu ===\n\r");
         LogToFile(LogFile,Log);
         
         // Initialize menu system
@@ -681,7 +682,7 @@ EFI_STATUS EFIAPI SREPEntry(IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *Syst
     }
     
     // AUTO MODE: Detect and patch automatically
-    AsciiSPrint(Log,512,"\n=== AUTO MODE: Detecting BIOS Type ===\n\r");
+    AsciiSPrint(Log, LOG_BUFFER_SIZE, "\n=== AUTO MODE: Detecting BIOS Type ===\n\r");
     LogToFile(LogFile,Log);
     
     // Initialize SREP context
@@ -692,7 +693,7 @@ EFI_STATUS EFIAPI SREPEntry(IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *Syst
     Status = DetectBiosType(&SrepCtx.BiosInfo);
     if (EFI_ERROR(Status))
     {
-        AsciiSPrint(Log,512,"BIOS detection failed: %r\n\r", Status);
+        AsciiSPrint(Log, LOG_BUFFER_SIZE, "BIOS detection failed: %r\n\r", Status);
         LogToFile(LogFile,Log);
         Print(L"BIOS detection failed: %r\n\r", Status);
         Print(L"Press any key to exit...\n\r");
@@ -712,7 +713,7 @@ EFI_STATUS EFIAPI SREPEntry(IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *Syst
     
     if (EFI_ERROR(Status))
     {
-        AsciiSPrint(Log,512,"Auto-patching failed: %r\n\r", Status);
+        AsciiSPrint(Log, LOG_BUFFER_SIZE, "Auto-patching failed: %r\n\r", Status);
         LogToFile(LogFile,Log);
         Print(L"Auto-patching failed: %r\n\r", Status);
     }

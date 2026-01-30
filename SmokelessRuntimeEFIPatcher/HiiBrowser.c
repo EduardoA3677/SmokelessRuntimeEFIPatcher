@@ -402,6 +402,247 @@ EFI_STATUS HiiBrowserEnumerateForms(HII_BROWSER_CONTEXT *Context)
 }
 
 /**
+ * Parse questions from IFR data for a specific form
+ */
+STATIC EFI_STATUS ParseFormQuestions(
+    HII_BROWSER_CONTEXT *Context,
+    EFI_HII_HANDLE HiiHandle,
+    UINT16 FormId,
+    UINT8 *IfrData,
+    UINTN IfrSize,
+    HII_QUESTION_INFO **QuestionList,
+    UINTN *QuestionCount
+)
+{
+    if (IfrData == NULL || IfrSize == 0 || QuestionList == NULL || QuestionCount == NULL)
+        return EFI_INVALID_PARAMETER;
+    
+    UINT8 *Data = IfrData;
+    UINTN Offset = 0;
+    HII_QUESTION_INFO *Questions = NULL;
+    UINTN Count = 0;
+    UINTN Capacity = 20;  // Initial capacity
+    BOOLEAN InTargetForm = FALSE;
+    BOOLEAN InSuppressIf = FALSE;
+    BOOLEAN InGrayoutIf = FALSE;
+    
+    // Allocate initial question array
+    Questions = AllocateZeroPool(sizeof(HII_QUESTION_INFO) * Capacity);
+    if (Questions == NULL)
+        return EFI_OUT_OF_RESOURCES;
+    
+    // Get HII String Protocol for retrieving strings
+    EFI_HII_STRING_PROTOCOL *HiiString = NULL;
+    EFI_STATUS Status = gBS->LocateProtocol(
+        &gEfiHiiStringProtocolGuid,
+        NULL,
+        (VOID **)&HiiString
+    );
+    
+    // Parse IFR opcodes
+    while (Offset < IfrSize)
+    {
+        if (Offset + sizeof(EFI_IFR_OP_HEADER) > IfrSize)
+            break;
+        
+        EFI_IFR_OP_HEADER *OpHeader = (EFI_IFR_OP_HEADER *)&Data[Offset];
+        
+        if (OpHeader->Length == 0 || OpHeader->Length > IfrSize - Offset)
+            break;
+        
+        switch (OpHeader->OpCode)
+        {
+            case EFI_IFR_FORM_OP:
+            {
+                if (Offset + sizeof(EFI_IFR_FORM) <= IfrSize)
+                {
+                    EFI_IFR_FORM *Form = (EFI_IFR_FORM *)OpHeader;
+                    InTargetForm = (Form->FormId == FormId);
+                }
+                break;
+            }
+            
+            case EFI_IFR_END_OP:
+            {
+                // End of form or suppress scope
+                if ((OpHeader->Scope) == 0)
+                {
+                    InSuppressIf = FALSE;
+                    InGrayoutIf = FALSE;
+                }
+                break;
+            }
+            
+            case EFI_IFR_SUPPRESS_IF_OP:
+                InSuppressIf = TRUE;
+                break;
+            
+            case EFI_IFR_GRAY_OUT_IF_OP:
+                InGrayoutIf = TRUE;
+                break;
+            
+            // Handle different question types
+            case EFI_IFR_ONE_OF_OP:
+            case EFI_IFR_CHECKBOX_OP:
+            case EFI_IFR_NUMERIC_OP:
+            case EFI_IFR_STRING_OP:
+            {
+                if (!InTargetForm)
+                    break;
+                
+                // Check capacity
+                if (Count >= Capacity)
+                {
+                    Capacity *= 2;
+                    HII_QUESTION_INFO *NewQuestions = AllocateZeroPool(sizeof(HII_QUESTION_INFO) * Capacity);
+                    if (NewQuestions != NULL)
+                    {
+                        CopyMem(NewQuestions, Questions, sizeof(HII_QUESTION_INFO) * Count);
+                        FreePool(Questions);
+                        Questions = NewQuestions;
+                    }
+                }
+                
+                if (Count < Capacity)
+                {
+                    HII_QUESTION_INFO *Question = &Questions[Count];
+                    
+                    // Common fields for all question types
+                    if (Offset + sizeof(EFI_IFR_QUESTION_HEADER) <= IfrSize)
+                    {
+                        UINT8 *QuestionData = &Data[Offset];
+                        
+                        // Extract question header (varies by type but all have these fields)
+                        // Offset to QuestionId varies by opcode structure
+                        UINT16 *PromptPtr = (UINT16 *)(QuestionData + sizeof(EFI_IFR_OP_HEADER));
+                        UINT16 *HelpPtr = (UINT16 *)(QuestionData + sizeof(EFI_IFR_OP_HEADER) + 2);
+                        
+                        EFI_STRING_ID PromptId = *PromptPtr;
+                        EFI_STRING_ID HelpId = *HelpPtr;
+                        
+                        // Get question ID (location varies by type)
+                        UINT16 QuestionId = 0;
+                        if (OpHeader->OpCode == EFI_IFR_ONE_OF_OP && 
+                            Offset + sizeof(EFI_IFR_ONE_OF) <= IfrSize)
+                        {
+                            EFI_IFR_ONE_OF *OneOf = (EFI_IFR_ONE_OF *)OpHeader;
+                            QuestionId = OneOf->Question.QuestionId;
+                            
+                            // Store variable info
+                            if (OneOf->Question.VarStoreId != 0)
+                            {
+                                Question->VariableName = NULL;  // Would need varstore lookup
+                                Question->VariableOffset = OneOf->Question.VarStoreInfo.VarOffset;
+                            }
+                        }
+                        else if (OpHeader->OpCode == EFI_IFR_CHECKBOX_OP &&
+                                 Offset + sizeof(EFI_IFR_CHECKBOX) <= IfrSize)
+                        {
+                            EFI_IFR_CHECKBOX *Checkbox = (EFI_IFR_CHECKBOX *)OpHeader;
+                            QuestionId = Checkbox->Question.QuestionId;
+                            
+                            if (Checkbox->Question.VarStoreId != 0)
+                            {
+                                Question->VariableName = NULL;
+                                Question->VariableOffset = Checkbox->Question.VarStoreInfo.VarOffset;
+                            }
+                        }
+                        else if (OpHeader->OpCode == EFI_IFR_NUMERIC_OP &&
+                                 Offset + sizeof(EFI_IFR_NUMERIC) <= IfrSize)
+                        {
+                            EFI_IFR_NUMERIC *Numeric = (EFI_IFR_NUMERIC *)OpHeader;
+                            QuestionId = Numeric->Question.QuestionId;
+                            
+                            // Store min/max/step for numeric
+                            Question->Minimum = Numeric->data.u64.MinValue;
+                            Question->Maximum = Numeric->data.u64.MaxValue;
+                            Question->Step = Numeric->data.u64.Step;
+                            
+                            if (Numeric->Question.VarStoreId != 0)
+                            {
+                                Question->VariableName = NULL;
+                                Question->VariableOffset = Numeric->Question.VarStoreInfo.VarOffset;
+                            }
+                        }
+                        else if (OpHeader->OpCode == EFI_IFR_STRING_OP &&
+                                 Offset + sizeof(EFI_IFR_STRING) <= IfrSize)
+                        {
+                            EFI_IFR_STRING *String = (EFI_IFR_STRING *)OpHeader;
+                            QuestionId = String->Question.QuestionId;
+                            
+                            // Store string limits
+                            Question->Minimum = String->MinSize;
+                            Question->Maximum = String->MaxSize;
+                            
+                            if (String->Question.VarStoreId != 0)
+                            {
+                                Question->VariableName = NULL;
+                                Question->VariableOffset = String->Question.VarStoreInfo.VarOffset;
+                            }
+                        }
+                        
+                        Question->QuestionId = QuestionId;
+                        Question->Type = OpHeader->OpCode;
+                        Question->IsHidden = InSuppressIf;
+                        Question->IsGrayedOut = InGrayoutIf;
+                        Question->IsModified = FALSE;
+                        
+                        // Get prompt string
+                        if (!EFI_ERROR(Status) && HiiString != NULL && PromptId != 0)
+                        {
+                            UINTN StringSize = 0;
+                            HiiString->GetString(HiiString, "en-US", HiiHandle, PromptId, NULL, &StringSize, NULL);
+                            
+                            if (StringSize > 0)
+                            {
+                                Question->Prompt = AllocateZeroPool(StringSize);
+                                if (Question->Prompt != NULL)
+                                {
+                                    HiiString->GetString(HiiString, "en-US", HiiHandle, PromptId,
+                                                        Question->Prompt, &StringSize, NULL);
+                                }
+                            }
+                        }
+                        
+                        if (Question->Prompt == NULL)
+                        {
+                            Question->Prompt = AllocateCopyPool(StrSize(L"BIOS Option"), L"BIOS Option");
+                        }
+                        
+                        // Get help string
+                        if (!EFI_ERROR(Status) && HiiString != NULL && HelpId != 0)
+                        {
+                            UINTN StringSize = 0;
+                            HiiString->GetString(HiiString, "en-US", HiiHandle, HelpId, NULL, &StringSize, NULL);
+                            
+                            if (StringSize > 0)
+                            {
+                                Question->HelpText = AllocateZeroPool(StringSize);
+                                if (Question->HelpText != NULL)
+                                {
+                                    HiiString->GetString(HiiString, "en-US", HiiHandle, HelpId,
+                                                        Question->HelpText, &StringSize, NULL);
+                                }
+                            }
+                        }
+                        
+                        Count++;
+                    }
+                }
+                break;
+            }
+        }
+        
+        Offset += OpHeader->Length;
+    }
+    
+    *QuestionList = Questions;
+    *QuestionCount = Count;
+    
+    return EFI_SUCCESS;
+}
+
+/**
  * Get questions for a specific form
  */
 EFI_STATUS HiiBrowserGetFormQuestions(
@@ -414,26 +655,72 @@ EFI_STATUS HiiBrowserGetFormQuestions(
     if (Context == NULL || Form == NULL || Questions == NULL || QuestionCount == NULL)
         return EFI_INVALID_PARAMETER;
     
-    // For now, create placeholder questions
-    // A full implementation would parse the form's IFR data
-    *QuestionCount = 5;
-    *Questions = AllocateZeroPool(sizeof(HII_QUESTION_INFO) * (*QuestionCount));
+    // Get the IFR package for this form's HII handle
+    UINTN BufferSize = 0;
+    EFI_HII_PACKAGE_LIST_HEADER *PackageList = NULL;
+    EFI_STATUS Status;
     
-    if (*Questions == NULL)
-        return EFI_OUT_OF_RESOURCES;
+    Status = Context->HiiDatabase->ExportPackageLists(
+        Context->HiiDatabase,
+        Form->HiiHandle,
+        &BufferSize,
+        PackageList
+    );
     
-    for (UINTN i = 0; i < *QuestionCount; i++)
+    if (Status == EFI_BUFFER_TOO_SMALL)
     {
-        HII_QUESTION_INFO *Question = &(*Questions)[i];
-        Question->QuestionId = (UINT16)i;
-        Question->Prompt = AllocateCopyPool(StrSize(L"BIOS Option"), L"BIOS Option");
-        Question->HelpText = AllocateCopyPool(StrSize(L"Help text"), L"Help text");
-        Question->Type = 0;
-        Question->IsHidden = FALSE;
-        Question->IsGrayedOut = FALSE;
+        PackageList = AllocateZeroPool(BufferSize);
+        if (PackageList != NULL)
+        {
+            Status = Context->HiiDatabase->ExportPackageLists(
+                Context->HiiDatabase,
+                Form->HiiHandle,
+                &BufferSize,
+                PackageList
+            );
+            
+            if (!EFI_ERROR(Status))
+            {
+                // Parse IFR packages
+                UINT8 *PackageData = (UINT8 *)PackageList + sizeof(EFI_HII_PACKAGE_LIST_HEADER);
+                UINTN PackageOffset = 0;
+                UINTN TotalPackageSize = PackageList->PackageLength - sizeof(EFI_HII_PACKAGE_LIST_HEADER);
+                
+                while (PackageOffset < TotalPackageSize)
+                {
+                    EFI_HII_PACKAGE_HEADER *PackageHeader = (EFI_HII_PACKAGE_HEADER *)&PackageData[PackageOffset];
+                    
+                    if (PackageHeader->Length == 0)
+                        break;
+                    
+                    if ((PackageHeader->Type & 0x7F) == EFI_HII_PACKAGE_FORMS)
+                    {
+                        UINT8 *IfrData = (UINT8 *)PackageHeader + sizeof(EFI_HII_PACKAGE_HEADER);
+                        UINTN IfrSize = PackageHeader->Length - sizeof(EFI_HII_PACKAGE_HEADER);
+                        
+                        Status = ParseFormQuestions(
+                            Context,
+                            Form->HiiHandle,
+                            Form->FormId,
+                            IfrData,
+                            IfrSize,
+                            Questions,
+                            QuestionCount
+                        );
+                        
+                        FreePool(PackageList);
+                        return Status;
+                    }
+                    
+                    PackageOffset += PackageHeader->Length;
+                }
+            }
+            
+            FreePool(PackageList);
+        }
     }
     
-    return EFI_SUCCESS;
+    return EFI_NOT_FOUND;
 }
 
 /**
