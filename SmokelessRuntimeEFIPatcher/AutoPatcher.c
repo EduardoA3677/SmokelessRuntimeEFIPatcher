@@ -701,6 +701,10 @@ UnlockHiddenForms(VOID *ImageBase, UINTN ImageSize, BIOS_INFO *BiosInfo)
 {
     UINT8 *Data = (UINT8 *)ImageBase;
     UINTN UnlockCount = 0;
+    UINTN i, j;
+    UINT32 *VisibilityFlag;
+    BOOLEAN LooksLikeGuid;
+    UINT8 ZeroCount, FFCount;
     
     if (ImageBase == NULL || ImageSize == 0)
     {
@@ -709,7 +713,7 @@ UnlockHiddenForms(VOID *ImageBase, UINTN ImageSize, BIOS_INFO *BiosInfo)
     
     // Pattern 1: AMI form suppression (suppressif TRUE)
     // Look for: 0x0A 0x82 (SUPPRESSIF opcode) followed by condition
-    for (UINTN i = 0; i < ImageSize - 10; i++)
+    for (i = 0; i < ImageSize - 10; i++)
     {
         // SUPPRESSIF opcode (0x0A) with TRUE condition
         if (Data[i] == 0x0A && Data[i + 1] == 0x82)
@@ -719,7 +723,7 @@ UnlockHiddenForms(VOID *ImageBase, UINTN ImageSize, BIOS_INFO *BiosInfo)
             {
                 // Replace with FALSE condition (0x47) or remove suppressif
                 // Convert SUPPRESSIF TRUE to SUPPRESSIF FALSE
-                for (UINTN j = 0; j < 4 && (i + j) < ImageSize; j++)
+                for (j = 0; j < 4 && (i + j) < ImageSize; j++)
                 {
                     if (Data[i + j] == 0x46)
                     {
@@ -756,14 +760,14 @@ UnlockHiddenForms(VOID *ImageBase, UINTN ImageSize, BIOS_INFO *BiosInfo)
     // HP uses a different structure for form visibility
     // Search for patterns like: [GUID][uint32 visibility flag]
     // When flag is 0x00000000, form is hidden
-    for (UINTN i = 0; i < ImageSize - 20; i++)
+    for (i = 0; i < ImageSize - 20; i++)
     {
         // Look for GUID pattern followed by 0x00000000 (hidden flag)
         // GUIDs have specific structure, we can detect them
         if (i + 20 < ImageSize)
         {
             // Check if next 4 bytes after potential GUID (16 bytes) are 0x00000000
-            UINT32 *VisibilityFlag = (UINT32 *)&Data[i + 16];
+            VisibilityFlag = (UINT32 *)&Data[i + 16];
             
             // If we find a 0x00000000 flag that looks like a visibility control
             // we can try changing it to 0x01000000 (visible)
@@ -772,11 +776,11 @@ UnlockHiddenForms(VOID *ImageBase, UINTN ImageSize, BIOS_INFO *BiosInfo)
             {
                 // Verify this looks like a form structure
                 // Check for GUID-like pattern (not all zeros, not all FFs)
-                BOOLEAN LooksLikeGuid = FALSE;
-                UINT8 ZeroCount = 0;
-                UINT8 FFCount = 0;
+                LooksLikeGuid = FALSE;
+                ZeroCount = 0;
+                FFCount = 0;
                 
-                for (UINTN j = 0; j < 16; j++)
+                for (j = 0; j < 16; j++)
                 {
                     if (Data[i + j] == 0x00) ZeroCount++;
                     if (Data[i + j] == 0xFF) FFCount++;

@@ -137,9 +137,9 @@ ConfigSaveToFile(CONFIG_MANAGER *Manager, EFI_HANDLE ImageHandle, CHAR16 *FilePa
     EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *FileSystem;
     EFI_FILE *Root;
     EFI_FILE *ConfigFile;
-    UINTN i;
+    UINTN i, j;
     CONFIG_ENTRY *Entry;
-    CHAR8 Buffer[512];
+    CHAR8 Buffer[1024];
     UINTN BufferSize;
 
     if (Manager == NULL || FilePath == NULL) {
@@ -211,7 +211,7 @@ ConfigSaveToFile(CONFIG_MANAGER *Manager, EFI_HANDLE ImageHandle, CHAR16 *FilePa
         ConfigFile->Write(ConfigFile, &BufferSize, Buffer);
         
         // Write wide string as ASCII (simplified)
-        for (UINTN j = 0; Entry->VariableName[j] != 0 && j < 100; j++) {
+        for (j = 0; Entry->VariableName[j] != 0 && j < 100; j++) {
             CHAR8 c = (CHAR8)Entry->VariableName[j];
             BufferSize = 1;
             ConfigFile->Write(ConfigFile, &BufferSize, &c);
@@ -254,7 +254,7 @@ ConfigSaveToFile(CONFIG_MANAGER *Manager, EFI_HANDLE ImageHandle, CHAR16 *FilePa
         BufferSize = AsciiStrLen(Buffer);
         ConfigFile->Write(ConfigFile, &BufferSize, Buffer);
 
-        for (UINTN j = 0; j < Entry->Size && j < 256; j++) {
+        for (j = 0; j < Entry->Size && j < 256; j++) {
             AsciiSPrint(Buffer, sizeof(Buffer), "%02X", ((UINT8*)Entry->Value)[j]);
             BufferSize = AsciiStrLen(Buffer);
             ConfigFile->Write(ConfigFile, &BufferSize, Buffer);
@@ -396,8 +396,9 @@ ConfigLoadFromFile(CONFIG_MANAGER *Manager, EFI_HANDLE ImageHandle, CHAR16 *File
 EFI_STATUS 
 ConfigExportToText(CONFIG_MANAGER *Manager, EFI_HANDLE ImageHandle, CHAR16 *FilePath)
 {
-    UINTN i;
+    UINTN i, j;
     CONFIG_ENTRY *Entry;
+    UINTN PrintSize;
 
     if (Manager == NULL || FilePath == NULL) {
         return EFI_INVALID_PARAMETER;
@@ -421,8 +422,8 @@ ConfigExportToText(CONFIG_MANAGER *Manager, EFI_HANDLE ImageHandle, CHAR16 *File
 
         // Print value (first few bytes)
         Print(L"  Value: ");
-        UINTN PrintSize = Entry->Size > 16 ? 16 : Entry->Size;
-        for (UINTN j = 0; j < PrintSize; j++) {
+        PrintSize = Entry->Size > 16 ? 16 : Entry->Size;
+        for (j = 0; j < PrintSize; j++) {
             Print(L"%02X ", ((UINT8*)Entry->Value)[j]);
         }
         if (Entry->Size > 16) {
@@ -621,6 +622,7 @@ ConfigValidate(CONFIG_MANAGER *Manager)
     UINTN i;
     CONFIG_ENTRY *Entry;
     BOOLEAN IsValid = TRUE;
+    UINTN NameLen;
     
     if (Manager == NULL) {
         return EFI_INVALID_PARAMETER;
@@ -654,7 +656,7 @@ ConfigValidate(CONFIG_MANAGER *Manager)
         }
         
         // Check variable name length
-        UINTN NameLen = StrLen(Entry->VariableName);
+        NameLen = StrLen(Entry->VariableName);
         if (NameLen == 0) {
             Print(L"  Entry %u: INVALID - Variable name is empty\n", i);
             IsValid = FALSE;

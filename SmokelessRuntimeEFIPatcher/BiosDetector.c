@@ -271,7 +271,7 @@ EFI_STATUS FindSetupModules(BIOS_INFO *BiosInfo)
                 if (BiosInfo->Type == BIOS_TYPE_AMI_HP_CUSTOM)
                 {
                     if (ContainsString(ModuleName, L"HPSetup") ||
-                        ContainsString(ModuleName, L"HP") && ContainsString(ModuleName, L"Setup"))
+                        (ContainsString(ModuleName, L"HP") && ContainsString(ModuleName, L"Setup")))
                     {
                         AsciiSPrint(Log, 512, "Found HP Setup Module: %s\n\r", ModuleName);
                         LogToFile(LogFile, Log);
