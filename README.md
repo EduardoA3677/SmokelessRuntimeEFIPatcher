@@ -218,3 +218,139 @@ You could do the same to show the PBS menu and the Advanced Menu on intel one, i
     Op LoadFromFV
     SetupUtilityApp
     Op Exec
+
+## AMI BIOS Support
+
+### Overview
+AMI (American Megatrends Inc.) BIOS uses a different architecture compared to Insyde H2O, but SREP can still be used to unlock hidden menus and modify BIOS behavior at runtime. AMI BIOS typically uses the TSE (Text Setup Environment) module for setup menu management.
+
+### Key Differences from Insyde H2O
+- **Module Names**: AMI uses modules like `Setup`, `TSE`, or `SetupBrowser` instead of `H2OFormBrowserDxe`
+- **Structure**: While both use UEFI standard form structures with GUIDs, AMI's internal implementation differs
+- **Form Management**: AMI TSE handles form visibility and access differently than Insyde's H2O FormBrowser
+
+### Finding AMI Module Names
+To identify the correct module name for your AMI BIOS:
+
+1. Boot SREP and check the log file `SREP.log` which lists all loaded modules
+2. Look for modules with names containing:
+   - `Setup`
+   - `TSE` 
+   - `SetupBrowser`
+   - `FormBrowser`
+3. Use tools like UEFITool to extract and analyze your BIOS image offline
+
+### AMI BIOS Pattern Discovery
+To create patches for AMI BIOS:
+
+1. **Extract the BIOS**: Use UEFITool to open your BIOS image
+2. **Locate Setup Module**: Find the Setup/TSE module in the firmware volume
+3. **Extract IFR**: Use IFRExtractor or Universal IFR Extractor to get human-readable form data
+4. **Identify Form GUIDs**: Look for hidden menus you want to unlock (typically marked with "Suppress If" conditions)
+5. **Create Pattern**: The visibility flag is usually a byte following the GUID (00 = hidden, 01 = visible)
+
+### AMI-BIOS-Unlock Example
+
+For AMI BIOS, the process is similar to Insyde but targets different modules. Here's a generic example:
+
+**Step 1**: Identify your Setup module name (e.g., `Setup` or `TSE`)
+
+**Step 2**: Find the GUID of the menu you want to unlock using IFRExtractor
+
+**Step 3**: Create a pattern to search and replace. For example, to unlock an "Advanced" menu with GUID `{A1B2C3D4-E5F6-7890-ABCD-EF0123456789}`:
+
+    Op Loaded
+    Setup
+    Op Patch
+    Pattern
+    D4C3B2A1F6E5907890ABCDEF012345678900000000
+    D4C3B2A1F6E5907890ABCDEF012345678901000000
+    Op End
+    
+    Op LoadFromFV
+    SetupUtilityApp
+    Op Exec
+
+> [!NOTE]
+> The GUID bytes are in little-endian format. Convert your GUID accordingly:
+> - GUID `{A1B2C3D4-E5F6-7890-ABCD-EF0123456789}` becomes
+> - Bytes `D4C3B2A1 F6E5 9078 90AB CDEF01234567 89` then append `00000000` for the visibility flag
+
+### Common AMI Module Names by Vendor
+
+Different manufacturers may use different module names:
+
+| Vendor | Common Module Names |
+|--------|-------------------|
+| ASUS | `Setup`, `SetupUtilityApp`, `TSE` |
+| MSI | `Setup`, `ClickBiosSetup`, `TSE` |
+| ASRock | `Setup`, `TSE` |
+| Gigabyte | `Setup`, `TSE` |
+| Generic AMI | `Setup`, `SetupBrowser`, `TSE` |
+
+### Advanced AMI Patching Techniques
+
+#### Multiple Form Unlocking
+You can unlock multiple menus in a single config:
+
+    Op Loaded
+    Setup
+    Op Patch
+    Pattern
+    [GUID1]00000000
+    [GUID1]01000000
+    Op Patch
+    Pattern
+    [GUID2]00000000
+    [GUID2]01000000
+    Op Patch
+    Pattern
+    [GUID3]00000000
+    [GUID3]01000000
+    Op End
+    
+    Op LoadFromFV
+    SetupUtilityApp
+    Op Exec
+
+#### Conditional Patching
+For BIOS-specific features, you might need to patch at specific offsets discovered through analysis:
+
+    Op Loaded
+    Setup
+    Op Patch
+    RelPosOffset
+    1234
+    01000000
+    Op End
+
+### Tips for AMI BIOS
+
+1. **Always check SREP.log**: The log file will show you exactly which modules are loaded and any errors encountered
+2. **Pattern not found?**: Your BIOS might use a different structure. Extract and analyze with UEFITool/IFRExtractor
+3. **Test incrementally**: Unlock one menu at a time to identify which patterns work
+4. **Backup always**: Keep a BIOS backup and know how to recover (BIOS Flashback, dual BIOS, or SPI programmer)
+5. **Check module variations**: Some AMI BIOS versions might name their setup module differently
+
+### Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| Pattern not found | Use IFRExtractor to verify the exact GUID and structure in your BIOS |
+| Module not loaded | Check SREP.log for actual module name, it might differ from expected |
+| Setup doesn't show changes | Try loading and executing the setup utility explicitly with LoadFromFV |
+| System hangs | Pattern might be corrupted or wrong; verify GUID byte order (little-endian) |
+
+### Security Considerations
+
+> [!WARNING]
+> - AMI BIOS with Secure Boot enabled may prevent module loading
+> - Some AMI BIOS implementations have additional protections (Intel Boot Guard, AMD Platform Security Processor)
+> - Runtime patching may be detected by security features
+> - Always test on non-critical systems first
+
+### Resources
+- [UEFITool](https://github.com/LongSoft/UEFITool) - For BIOS analysis
+- [IFRExtractor](https://github.com/LongSoft/Universal-IFR-Extractor) - For extracting human-readable setup forms
+- [AMI BIOS Structure Documentation](https://www.ami.com/) - Official AMI resources
+- [BIOS Modding Communities](https://winraid.level1techs.com/) - Community knowledge base

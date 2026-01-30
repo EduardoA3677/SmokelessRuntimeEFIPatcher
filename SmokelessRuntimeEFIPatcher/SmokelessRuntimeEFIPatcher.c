@@ -147,6 +147,71 @@ VOID PrintDump(UINT16 Size, UINT8 *DUMP)
 }
 
 
+
+
+VOID ListAllLoadedModules(EFI_FILE *LogFile)
+{
+    EFI_STATUS Status;
+    UINTN HandleSize = 0;
+    EFI_HANDLE *Handles;
+    
+    AsciiSPrint(Log,512,"%a","\n=== Listing All Loaded Modules ===\n\r");
+    LogToFile(LogFile,Log);
+    
+    Status = gBS->LocateHandle(ByProtocol, &gEfiLoadedImageProtocolGuid, NULL, &HandleSize, NULL);
+    if (Status == EFI_BUFFER_TOO_SMALL)
+    {
+        Handles = AllocateZeroPool(HandleSize);
+        if (Handles == NULL) {
+            AsciiSPrint(Log,512,"%a","Failed to allocate memory for handles\n\r");
+            LogToFile(LogFile,Log);
+            return;
+        }
+        
+        Status = gBS->LocateHandle(ByProtocol, &gEfiLoadedImageProtocolGuid, NULL, &HandleSize, Handles);
+        if (EFI_ERROR(Status)) {
+            AsciiSPrint(Log,512,"Failed to locate handles: %r\n\r", Status);
+            LogToFile(LogFile,Log);
+            FreePool(Handles);
+            return;
+        }
+        
+        AsciiSPrint(Log,512,"Found %d loaded modules:\n\r", HandleSize / sizeof(EFI_HANDLE));
+        LogToFile(LogFile,Log);
+    }
+    else
+    {
+        AsciiSPrint(Log,512,"Failed to get handle buffer size: %r\n\r", Status);
+        LogToFile(LogFile,Log);
+        return;
+    }
+
+    EFI_LOADED_IMAGE_PROTOCOL *LoadedImageProtocol;
+    for (UINTN i = 0; i < HandleSize / sizeof(EFI_HANDLE); i++)
+    {
+        Status = gBS->HandleProtocol(Handles[i], &gEfiLoadedImageProtocolGuid, (VOID **)&LoadedImageProtocol);
+        if (Status == EFI_SUCCESS)
+        {
+            CHAR16 *String = FindLoadedImageFileName(LoadedImageProtocol);
+            if (String != NULL)
+            {
+                AsciiSPrint(Log,512,"  [%d] %s (Base: 0x%X, Size: 0x%X)\n\r", 
+                    i, String, LoadedImageProtocol->ImageBase, LoadedImageProtocol->ImageSize);
+                LogToFile(LogFile,Log);
+            }
+            else
+            {
+                AsciiSPrint(Log,512,"  [%d] <Unnamed Module> (Base: 0x%X, Size: 0x%X)\n\r", 
+                    i, LoadedImageProtocol->ImageBase, LoadedImageProtocol->ImageSize);
+                LogToFile(LogFile,Log);
+            }
+        }
+    }
+    
+    FreePool(Handles);
+    AsciiSPrint(Log,512,"%a","=== End of Module List ===\n\n\r");
+    LogToFile(LogFile,Log);
+}
 
 EFI_STATUS EFIAPI SREPEntry(IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *SystemTable)
 {
@@ -172,6 +237,10 @@ EFI_STATUS EFIAPI SREPEntry(IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *Syst
     }
     AsciiSPrint(Log,512,"Welcome to SREP (Smokeless Runtime EFI Patcher) %s\n\r", SREP_VERSION);
     LogToFile(LogFile,Log);
+    
+    // List all loaded modules to help identify AMI/Insyde module names
+    ListAllLoadedModules(LogFile);
+    
     UnicodeSPrint(FileName, sizeof(FileName), L"%a", "SREP_Config.cfg");
     Status = Root->Open(Root, &ConfigFile, FileName, EFI_FILE_MODE_READ, 0);
     if (Status != EFI_SUCCESS)
@@ -414,31 +483,44 @@ EFI_STATUS EFIAPI SREPEntry(IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *Syst
             LogToFile(LogFile,Log);
             AsciiSPrint(Log,512,"Patching Image Size %x: \n\r", ImageInfo->ImageSize);
             LogToFile(LogFile,Log);
+            
+            // Validate patch arguments
+            if (next->ARG7 == 0 || next->ARG6 == 0) {
+                AsciiSPrint(Log,512,"%a","Error: Invalid patch pattern (NULL or zero size)\n\r");
+                LogToFile(LogFile,Log);
+                break;
+            }
+            
             PrintDump(next->ARG6, (UINT8 *)next->ARG7);
-
-            PrintDump(next->ARG6, ((UINT8 *)ImageInfo->ImageBase) + 0x1A383);
-            // PrintDump(0x200, (UINT8 *)(LoadedImage->ImageBase));
+            
             if (next->PatterType == PATTERN)
             {
 
                 AsciiSPrint(Log,512,"%a","Finding Offset\n\r");
                 LogToFile(LogFile,Log);
+                
+                // Bounds check before pattern search
+                if (next->ARG6 > ImageInfo->ImageSize) {
+                    AsciiSPrint(Log,512,"Error: Pattern size (%x) exceeds image size (%x)\n\r", next->ARG6, ImageInfo->ImageSize);
+                    LogToFile(LogFile,Log);
+                    break;
+                }
+                
                 for (UINTN i = 0; i < ImageInfo->ImageSize - next->ARG6; i += 1)
                 {
                     if (CompareMem(((UINT8 *)ImageInfo->ImageBase) + i, (UINT8 *)next->ARG7, next->ARG6) == 0)
                     {
                         next->ARG3 = i;
-                        AsciiSPrint(Log,512,"Found at %x\n\r", i);
+                        AsciiSPrint(Log,512,"Found pattern at offset 0x%x\n\r", i);
                         LogToFile(LogFile,Log);
                         break;
                     }
                 }
                 if (next->ARG3 == 0xFFFFFFFF)
                 {
-                    AsciiSPrint(Log,512,"%a","No Patter Found\n\r");
+                    AsciiSPrint(Log,512,"%a","Error: Pattern not found in image\n\r");
                     LogToFile(LogFile,Log);
-                    //goto cleanup;
-                break;
+                    break;
                 }
             }
             if (next->PatterType == REL_POS_OFFSET)
@@ -450,13 +532,26 @@ EFI_STATUS EFIAPI SREPEntry(IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *Syst
                 next->ARG3 = BaseOffset - next->ARG3;
             }
             BaseOffset = next->ARG3;
-            AsciiSPrint(Log,512,"Offset %x\n\r", next->ARG3);
+            AsciiSPrint(Log,512,"Target offset: 0x%x\n\r", next->ARG3);
             LogToFile(LogFile,Log);
-            // PrintDump(next->ARG4+10,ImageInfo->ImageBase + next->ARG3 -5 );
+            
+            // Validate offset before patching
+            if (next->ARG3 + next->ARG4 > ImageInfo->ImageSize) {
+                AsciiSPrint(Log,512,"Error: Patch offset (0x%x + 0x%x) exceeds image size (0x%x)\n\r", 
+                    next->ARG3, next->ARG4, ImageInfo->ImageSize);
+                LogToFile(LogFile,Log);
+                break;
+            }
+            
+            if (next->ARG5 == 0 || next->ARG4 == 0) {
+                AsciiSPrint(Log,512,"%a","Error: Invalid replacement data (NULL or zero size)\n\r");
+                LogToFile(LogFile,Log);
+                break;
+            }
+            
             CopyMem(ImageInfo->ImageBase + next->ARG3, (UINT8 *)next->ARG5, next->ARG4);
-            AsciiSPrint(Log,512,"%a","Patched\n\r");
+            AsciiSPrint(Log,512,"Successfully patched %d bytes at offset 0x%x\n\r", next->ARG4, next->ARG3);
             LogToFile(LogFile,Log);
-            // PrintDump(next->ARG4+10,ImageInfo->ImageBase + next->ARG3 -5 );
             break;
         case EXEC:
             Exec(&AppImageHandle);
@@ -471,19 +566,19 @@ EFI_STATUS EFIAPI SREPEntry(IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *Syst
 //cleanup:
     for (next = Start; next != NULL; next = next->next)
     {
-        if (next->Name_Dyn_Alloc)
+        if (next->Name_Dyn_Alloc && next->Name != 0)
             FreePool((VOID *)next->Name);
-        if (next->PatterType_Dyn_Alloc)
+        if (next->PatterType_Dyn_Alloc && next->PatterType != 0)
             FreePool((VOID *)next->PatterType);
-        if (next->ARG3_Dyn_Alloc)
+        if (next->ARG3_Dyn_Alloc && next->ARG3 != 0)
             FreePool((VOID *)next->ARG3);
-        if (next->ARG4_Dyn_Alloc)
+        if (next->ARG4_Dyn_Alloc && next->ARG4 != 0)
             FreePool((VOID *)next->ARG4);
-        if (next->ARG5_Dyn_Alloc)
+        if (next->ARG5_Dyn_Alloc && next->ARG5 != 0)
             FreePool((VOID *)next->ARG5);
-        if (next->ARG6_Dyn_Alloc)
+        if (next->ARG6_Dyn_Alloc && next->ARG6 != 0)
             FreePool((VOID *)next->ARG6);
-        if (next->ARG7_Dyn_Alloc)
+        if (next->ARG7_Dyn_Alloc && next->ARG7 != 0)
             FreePool((VOID *)next->ARG7);
     }
     next = Start;
