@@ -13,13 +13,13 @@ jobs:
     steps:
     - name: Install Missing Tools
       run: sudo apt install nasm
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
       with:
         repository: tianocore/edk2
         ref: 'edk2-stable202205'
         submodules : true
         path: edk2
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
       with:
         path: edk2/SmokelessRuntimeEFIPatcher
     - name: Build Base Tools

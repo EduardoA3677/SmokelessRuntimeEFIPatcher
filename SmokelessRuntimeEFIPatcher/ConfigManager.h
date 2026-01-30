@@ -30,27 +30,31 @@ EFI_STATUS ConfigInitialize(CONFIG_MANAGER *Manager);
 
 /**
  * Load configuration from file
+ * @param ImageHandle - Handle to the loaded image
  * @param FilePath - Path to config file (e.g., L"fs0:\\SREP_Settings.cfg")
  */
-EFI_STATUS ConfigLoadFromFile(CONFIG_MANAGER *Manager, CHAR16 *FilePath);
+EFI_STATUS ConfigLoadFromFile(CONFIG_MANAGER *Manager, EFI_HANDLE ImageHandle, CHAR16 *FilePath);
 
 /**
  * Save configuration to file
+ * @param ImageHandle - Handle to the loaded image
  * @param FilePath - Path to save config file
  */
-EFI_STATUS ConfigSaveToFile(CONFIG_MANAGER *Manager, CHAR16 *FilePath);
+EFI_STATUS ConfigSaveToFile(CONFIG_MANAGER *Manager, EFI_HANDLE ImageHandle, CHAR16 *FilePath);
 
 /**
  * Export configuration in human-readable format
+ * @param ImageHandle - Handle to the loaded image
  * @param FilePath - Path to export file (e.g., L"fs0:\\SREP_Export.txt")
  */
-EFI_STATUS ConfigExportToText(CONFIG_MANAGER *Manager, CHAR16 *FilePath);
+EFI_STATUS ConfigExportToText(CONFIG_MANAGER *Manager, EFI_HANDLE ImageHandle, CHAR16 *FilePath);
 
 /**
  * Import configuration from text file
+ * @param ImageHandle - Handle to the loaded image
  * @param FilePath - Path to import file
  */
-EFI_STATUS ConfigImportFromText(CONFIG_MANAGER *Manager, CHAR16 *FilePath);
+EFI_STATUS ConfigImportFromText(CONFIG_MANAGER *Manager, EFI_HANDLE ImageHandle, CHAR16 *FilePath);
 
 /**
  * Add a configuration entry

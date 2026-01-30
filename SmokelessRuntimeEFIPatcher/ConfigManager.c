@@ -4,6 +4,7 @@
 #include <Library/PrintLib.h>
 #include <Protocol/LoadedImage.h>
 #include <Protocol/DevicePath.h>
+#include <Library/UefiBootServicesTableLib.h>
 
 /**
  * Initialize configuration manager
@@ -128,26 +129,148 @@ ConfigUpdateEntry(
  * Save configuration to binary file
  */
 EFI_STATUS 
-ConfigSaveToFile(CONFIG_MANAGER *Manager, CHAR16 *FilePath)
+ConfigSaveToFile(CONFIG_MANAGER *Manager, EFI_HANDLE ImageHandle, CHAR16 *FilePath)
 {
-    // Simplified implementation - in production, would use EFI_FILE_PROTOCOL
-    // For now, just mark as saved
+    EFI_STATUS Status;
+    EFI_LOADED_IMAGE_PROTOCOL *LoadedImage;
+    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *FileSystem;
+    EFI_FILE *Root;
+    EFI_FILE *ConfigFile;
+    UINTN i;
+    CONFIG_ENTRY *Entry;
+    CHAR8 Buffer[512];
+    UINTN BufferSize;
+
     if (Manager == NULL || FilePath == NULL) {
         return EFI_INVALID_PARAMETER;
     }
 
-    // TODO: Implement actual file I/O using EFI_SIMPLE_FILE_SYSTEM_PROTOCOL
-    // This requires:
-    // 1. Locate file system protocol
-    // 2. Open root directory
-    // 3. Create/open file
-    // 4. Write configuration data
-    // 5. Close file
+    // Get file system access
+    Status = gBS->HandleProtocol(
+        ImageHandle,
+        &gEfiLoadedImageProtocolGuid,
+        (VOID**)&LoadedImage
+    );
+    if (EFI_ERROR(Status)) {
+        Print(L"Failed to get loaded image protocol: %r\n", Status);
+        return Status;
+    }
 
-    Print(L"ConfigSaveToFile: Saving configuration to %s\n", FilePath);
-    Print(L"  Entries: %u\n", Manager->EntryCount);
+    Status = gBS->HandleProtocol(
+        LoadedImage->DeviceHandle,
+        &gEfiSimpleFileSystemProtocolGuid,
+        (VOID**)&FileSystem
+    );
+    if (EFI_ERROR(Status)) {
+        Print(L"Failed to get file system protocol: %r\n", Status);
+        return Status;
+    }
 
-    // For now, just mark as saved
+    Status = FileSystem->OpenVolume(FileSystem, &Root);
+    if (EFI_ERROR(Status)) {
+        Print(L"Failed to open volume: %r\n", Status);
+        return Status;
+    }
+
+    // Create/open file for writing
+    Status = Root->Open(
+        Root,
+        &ConfigFile,
+        FilePath,
+        EFI_FILE_MODE_CREATE | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_READ,
+        0
+    );
+    if (EFI_ERROR(Status)) {
+        Print(L"Failed to create config file: %r\n", Status);
+        Root->Close(Root);
+        return Status;
+    }
+
+    // Write header
+    AsciiSPrint(Buffer, sizeof(Buffer), "# SREP Configuration File\n");
+    BufferSize = AsciiStrLen(Buffer);
+    ConfigFile->Write(ConfigFile, &BufferSize, Buffer);
+
+    AsciiSPrint(Buffer, sizeof(Buffer), "# Total Entries: %u\n\n", Manager->EntryCount);
+    BufferSize = AsciiStrLen(Buffer);
+    ConfigFile->Write(ConfigFile, &BufferSize, Buffer);
+
+    // Write each entry
+    for (i = 0; i < Manager->EntryCount; i++) {
+        Entry = &Manager->Entries[i];
+        
+        // Write entry header
+        AsciiSPrint(Buffer, sizeof(Buffer), "[Entry_%u]\n", i);
+        BufferSize = AsciiStrLen(Buffer);
+        ConfigFile->Write(ConfigFile, &BufferSize, Buffer);
+
+        // Variable name (convert from CHAR16 to CHAR8)
+        AsciiSPrint(Buffer, sizeof(Buffer), "Variable=");
+        BufferSize = AsciiStrLen(Buffer);
+        ConfigFile->Write(ConfigFile, &BufferSize, Buffer);
+        
+        // Write wide string as ASCII (simplified)
+        for (UINTN j = 0; Entry->VariableName[j] != 0 && j < 100; j++) {
+            CHAR8 c = (CHAR8)Entry->VariableName[j];
+            BufferSize = 1;
+            ConfigFile->Write(ConfigFile, &BufferSize, &c);
+        }
+        BufferSize = 1;
+        ConfigFile->Write(ConfigFile, &BufferSize, "\n");
+
+        // Write GUID
+        AsciiSPrint(Buffer, sizeof(Buffer), 
+            "GUID=%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X\n",
+            Entry->Guid.Data1,
+            Entry->Guid.Data2,
+            Entry->Guid.Data3,
+            Entry->Guid.Data4[0], Entry->Guid.Data4[1],
+            Entry->Guid.Data4[2], Entry->Guid.Data4[3],
+            Entry->Guid.Data4[4], Entry->Guid.Data4[5],
+            Entry->Guid.Data4[6], Entry->Guid.Data4[7]
+        );
+        BufferSize = AsciiStrLen(Buffer);
+        ConfigFile->Write(ConfigFile, &BufferSize, Buffer);
+
+        // Write offset and size
+        AsciiSPrint(Buffer, sizeof(Buffer), "Offset=0x%X\n", Entry->Offset);
+        BufferSize = AsciiStrLen(Buffer);
+        ConfigFile->Write(ConfigFile, &BufferSize, Buffer);
+
+        AsciiSPrint(Buffer, sizeof(Buffer), "Size=%u\n", Entry->Size);
+        BufferSize = AsciiStrLen(Buffer);
+        ConfigFile->Write(ConfigFile, &BufferSize, Buffer);
+
+        // Write description if available
+        if (Entry->Description != NULL) {
+            AsciiSPrint(Buffer, sizeof(Buffer), "Description=%a\n", Entry->Description);
+            BufferSize = AsciiStrLen(Buffer);
+            ConfigFile->Write(ConfigFile, &BufferSize, Buffer);
+        }
+
+        // Write value as hex
+        AsciiSPrint(Buffer, sizeof(Buffer), "Value=");
+        BufferSize = AsciiStrLen(Buffer);
+        ConfigFile->Write(ConfigFile, &BufferSize, Buffer);
+
+        for (UINTN j = 0; j < Entry->Size && j < 256; j++) {
+            AsciiSPrint(Buffer, sizeof(Buffer), "%02X", ((UINT8*)Entry->Value)[j]);
+            BufferSize = AsciiStrLen(Buffer);
+            ConfigFile->Write(ConfigFile, &BufferSize, Buffer);
+        }
+        BufferSize = 1;
+        ConfigFile->Write(ConfigFile, &BufferSize, "\n");
+
+        // Empty line between entries
+        BufferSize = 1;
+        ConfigFile->Write(ConfigFile, &BufferSize, "\n");
+    }
+
+    ConfigFile->Flush(ConfigFile);
+    ConfigFile->Close(ConfigFile);
+    Root->Close(Root);
+
+    Print(L"Configuration saved to %s (%u entries)\n", FilePath, Manager->EntryCount);
     Manager->Modified = FALSE;
     
     return EFI_SUCCESS;
@@ -157,7 +280,7 @@ ConfigSaveToFile(CONFIG_MANAGER *Manager, CHAR16 *FilePath)
  * Load configuration from file
  */
 EFI_STATUS 
-ConfigLoadFromFile(CONFIG_MANAGER *Manager, CHAR16 *FilePath)
+ConfigLoadFromFile(CONFIG_MANAGER *Manager, EFI_HANDLE ImageHandle, CHAR16 *FilePath)
 {
     if (Manager == NULL || FilePath == NULL) {
         return EFI_INVALID_PARAMETER;
@@ -173,7 +296,7 @@ ConfigLoadFromFile(CONFIG_MANAGER *Manager, CHAR16 *FilePath)
  * Export configuration in human-readable format
  */
 EFI_STATUS 
-ConfigExportToText(CONFIG_MANAGER *Manager, CHAR16 *FilePath)
+ConfigExportToText(CONFIG_MANAGER *Manager, EFI_HANDLE ImageHandle, CHAR16 *FilePath)
 {
     UINTN i;
     CONFIG_ENTRY *Entry;
@@ -211,6 +334,34 @@ ConfigExportToText(CONFIG_MANAGER *Manager, CHAR16 *FilePath)
     }
 
     return EFI_SUCCESS;
+}
+
+/**
+ * Import configuration from text file
+ */
+EFI_STATUS 
+ConfigImportFromText(CONFIG_MANAGER *Manager, EFI_HANDLE ImageHandle, CHAR16 *FilePath)
+{
+    if (Manager == NULL || FilePath == NULL) {
+        return EFI_INVALID_PARAMETER;
+    }
+
+    // TODO: Implement actual file I/O to read text format configuration
+    // This would parse a text file in the format exported by ConfigExportToText
+    // Format expected:
+    //   Entry N:
+    //     Variable: <name>
+    //     GUID: <guid>
+    //     Offset: 0xXXXX
+    //     Size: N bytes
+    //     Description: <desc>
+    //     Value: XX XX XX ...
+    
+    Print(L"ConfigImportFromText: Importing configuration from %s\n", FilePath);
+    Print(L"  Note: Text import feature is currently a placeholder\n");
+    Print(L"  Use ConfigLoadFromFile for binary configuration files\n");
+
+    return EFI_UNSUPPORTED;
 }
 
 /**
