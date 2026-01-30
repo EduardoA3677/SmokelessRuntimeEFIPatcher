@@ -16,6 +16,11 @@ extern EFI_RUNTIME_SERVICES      *gRT;
 #include <Library/PrintLib.h>
 #include <Protocol/HiiString.h>
 
+// Forward declarations for helper functions
+STATIC VENDOR_TYPE DetectVendor(CHAR16 *Title, EFI_GUID *FormSetGuid);
+STATIC UINT8 DetectFormCategory(CHAR16 *Title);
+STATIC UINTN CategorizeForm(CHAR16 *Title);
+
 /**
  * Initialize HII browser
  */
