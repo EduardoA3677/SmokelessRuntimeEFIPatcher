@@ -81,3 +81,45 @@ EFI_STATUS PatchInsydeBios(EFI_HANDLE ImageHandle, BIOS_INFO *BiosInfo);
  * @return EFI_SUCCESS if Setup launched successfully
  */
 EFI_STATUS ExecuteSetupBrowser(EFI_HANDLE ImageHandle, BIOS_INFO *BiosInfo);
+
+/**
+ * Patch HP-specific AMI BIOS structures
+ * HP customized AMI BIOS uses additional protection mechanisms
+ * 
+ * @param ImageHandle   The image handle
+ * @param BiosInfo      BIOS information
+ * @return EFI_SUCCESS if successful
+ */
+EFI_STATUS PatchHpAmiBios(EFI_HANDLE ImageHandle, BIOS_INFO *BiosInfo);
+
+/**
+ * Unlock hidden forms by patching visibility flags in BIOS data
+ * This directly modifies form structures in memory
+ * 
+ * @param ImageBase     Base address of Setup module
+ * @param ImageSize     Size of the module
+ * @param BiosInfo      BIOS information
+ * @return Number of forms unlocked
+ */
+UINTN UnlockHiddenForms(VOID *ImageBase, UINTN ImageSize, BIOS_INFO *BiosInfo);
+
+/**
+ * Save patched values to BIOS data structures (not NVRAM)
+ * This writes directly to in-memory BIOS structures
+ * 
+ * @param ImageBase     Base address of target module
+ * @param ImageSize     Size of the module
+ * @param VarName       Variable name to modify
+ * @param Offset        Offset within variable data
+ * @param Value         New value to write
+ * @param ValueSize     Size of value
+ * @return EFI_SUCCESS if successful
+ */
+EFI_STATUS PatchBiosData(
+    VOID *ImageBase,
+    UINTN ImageSize,
+    CHAR16 *VarName,
+    UINTN Offset,
+    VOID *Value,
+    UINTN ValueSize
+);

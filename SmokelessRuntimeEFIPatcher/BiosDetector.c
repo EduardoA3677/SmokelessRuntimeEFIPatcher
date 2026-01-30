@@ -259,11 +259,30 @@ EFI_STATUS FindSetupModules(BIOS_INFO *BiosInfo)
                 if (ContainsString(ModuleName, L"Setup") || 
                     ContainsString(ModuleName, L"Form") ||
                     ContainsString(ModuleName, L"Hii") ||
-                    ContainsString(ModuleName, L"Browser"))
+                    ContainsString(ModuleName, L"Browser") ||
+                    ContainsString(ModuleName, L"HP"))  // Add HP modules
                 {
                     ModulesWithIfrCount++;
                     AsciiSPrint(Log, 512, "Module with potential IFR data: %s\n\r", ModuleName);
                     LogToFile(LogFile, Log);
+                }
+                
+                // Look for HP-specific modules
+                if (BiosInfo->Type == BIOS_TYPE_AMI_HP_CUSTOM)
+                {
+                    if (ContainsString(ModuleName, L"HPSetup") ||
+                        ContainsString(ModuleName, L"HP") && ContainsString(ModuleName, L"Setup"))
+                    {
+                        AsciiSPrint(Log, 512, "Found HP Setup Module: %s\n\r", ModuleName);
+                        LogToFile(LogFile, Log);
+                    }
+                    
+                    if (ContainsString(ModuleName, L"HPAmiTse") ||
+                        ContainsString(ModuleName, L"AMITSE"))
+                    {
+                        AsciiSPrint(Log, 512, "Found HP AMI TSE Module: %s\n\r", ModuleName);
+                        LogToFile(LogFile, Log);
+                    }
                 }
                 
                 // Look for Setup module variants (prefer non-PEI modules)
