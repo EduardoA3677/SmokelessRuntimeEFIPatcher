@@ -202,46 +202,66 @@ EFI_STATUS MenuCallback_AutoPatch(MENU_ITEM *Item, VOID *Context)
 EFI_STATUS MenuCallback_BrowseSettings(MENU_ITEM *Item, VOID *Context)
 {
     MENU_CONTEXT *MenuCtx = (MENU_CONTEXT *)Context;
-    HII_BROWSER_CONTEXT HiiCtx;
     EFI_STATUS Status;
     
     MenuShowMessage(MenuCtx, L"Loading", L"Loading BIOS modules and NVRAM data...");
     
+    // Allocate HiiCtx dynamically
+    HII_BROWSER_CONTEXT *HiiCtx = AllocateZeroPool(sizeof(HII_BROWSER_CONTEXT));
+    if (HiiCtx == NULL)
+    {
+        MenuShowMessage(MenuCtx, L"Error", L"Failed to allocate HII browser context!");
+        return EFI_OUT_OF_RESOURCES;
+    }
+    
     // Initialize HII browser (includes NVRAM loading)
-    Status = HiiBrowserInitialize(&HiiCtx);
+    Status = HiiBrowserInitialize(HiiCtx);
     if (EFI_ERROR(Status))
     {
         MenuShowMessage(MenuCtx, L"Error", L"Failed to initialize HII browser!");
+        FreePool(HiiCtx);
         return Status;
     }
     
-    HiiCtx.MenuContext = MenuCtx;
+    HiiCtx->MenuContext = MenuCtx;
+    
+    // Store HiiCtx temporarily for this browsing session
+    VOID *PreviousUserData = MenuCtx->UserData;
+    MenuCtx->UserData = (VOID *)HiiCtx;
     
     // Enumerate forms
-    Status = HiiBrowserEnumerateForms(&HiiCtx);
+    Status = HiiBrowserEnumerateForms(HiiCtx);
     if (EFI_ERROR(Status))
     {
         MenuShowMessage(MenuCtx, L"Error", L"Failed to enumerate BIOS forms!");
-        HiiBrowserCleanup(&HiiCtx);
+        HiiBrowserCleanup(HiiCtx);
+        FreePool(HiiCtx);
+        MenuCtx->UserData = PreviousUserData;
         return Status;
     }
     
     // Create and show forms menu
-    MENU_PAGE *FormsMenu = HiiBrowserCreateFormsMenu(&HiiCtx);
+    MENU_PAGE *FormsMenu = HiiBrowserCreateFormsMenu(HiiCtx);
     if (FormsMenu == NULL)
     {
         MenuShowMessage(MenuCtx, L"Error", L"Failed to create forms menu!");
-        HiiBrowserCleanup(&HiiCtx);
+        HiiBrowserCleanup(HiiCtx);
+        FreePool(HiiCtx);
+        MenuCtx->UserData = PreviousUserData;
         return EFI_OUT_OF_RESOURCES;
     }
     
-    MenuNavigateTo(MenuCtx, FormsMenu);
+    // Set parent for navigation
+    FormsMenu->Parent = MenuCtx->CurrentPage;
     
-    // Cleanup
-    MenuFreePage(FormsMenu);
-    HiiBrowserCleanup(&HiiCtx);
+    // Navigate to forms menu (this will allow interactive browsing)
+    Status = MenuNavigateTo(MenuCtx, FormsMenu);
     
-    return EFI_SUCCESS;
+    // Note: Don't cleanup here - the user will navigate back
+    // Cleanup will happen when they exit to parent menu
+    // For now, we keep HiiCtx alive
+    
+    return Status;
 }
 
 /**
@@ -501,43 +521,58 @@ EFI_STATUS CreateBiosStyleTabbedMenu(SREP_CONTEXT *SrepCtx)
 {
     EFI_STATUS Status;
     MENU_CONTEXT *MenuCtx = SrepCtx->MenuContext;
-    HII_BROWSER_CONTEXT HiiCtx;
+    
+    // Allocate HiiCtx dynamically so it persists
+    HII_BROWSER_CONTEXT *HiiCtx = AllocateZeroPool(sizeof(HII_BROWSER_CONTEXT));
+    if (HiiCtx == NULL)
+    {
+        Print(L"Failed to allocate HII browser context\n");
+        return EFI_OUT_OF_RESOURCES;
+    }
     
     Print(L"\n=== Extracting Real BIOS Forms ===\n");
     
     // Initialize HII browser to extract forms
-    Status = HiiBrowserInitialize(&HiiCtx);
+    Status = HiiBrowserInitialize(HiiCtx);
     if (EFI_ERROR(Status))
     {
         Print(L"Failed to initialize HII browser: %r\n", Status);
+        FreePool(HiiCtx);
         return Status;
     }
     
-    HiiCtx.MenuContext = MenuCtx;
+    HiiCtx->MenuContext = MenuCtx;
+    
+    // Store HiiCtx in MenuContext for callbacks to access
+    MenuCtx->UserData = (VOID *)HiiCtx;
     
     // Enumerate and parse real BIOS forms
-    Status = HiiBrowserEnumerateForms(&HiiCtx);
+    Status = HiiBrowserEnumerateForms(HiiCtx);
     if (EFI_ERROR(Status))
     {
         Print(L"Failed to enumerate BIOS forms: %r\n", Status);
-        HiiBrowserCleanup(&HiiCtx);
+        HiiBrowserCleanup(HiiCtx);
+        FreePool(HiiCtx);
+        MenuCtx->UserData = NULL;
         return Status;
     }
     
     // Create dynamic tabs based on extracted forms
-    Status = HiiBrowserCreateDynamicTabs(&HiiCtx, MenuCtx);
+    Status = HiiBrowserCreateDynamicTabs(HiiCtx, MenuCtx);
     if (EFI_ERROR(Status))
     {
         Print(L"Failed to create dynamic tabs: %r\n", Status);
-        HiiBrowserCleanup(&HiiCtx);
+        HiiBrowserCleanup(HiiCtx);
+        FreePool(HiiCtx);
+        MenuCtx->UserData = NULL;
         return Status;
     }
     
     Print(L"\nPress any key to enter BIOS-style interface...\n");
     WaitForKey();
     
-    // Note: We keep HiiCtx alive for the menu session
-    // It will be cleaned up when exiting
+    // Note: HiiCtx is now stored in MenuCtx->UserData
+    // It will be cleaned up when MenuCleanup is called
     
     return EFI_SUCCESS;
 }
@@ -672,6 +707,15 @@ EFI_STATUS EFIAPI SREPEntry(IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *Syst
             
             // Cleanup
             MenuFreePage(MainMenu);
+        }
+        
+        // Clean up HII browser context if it was allocated
+        if (MenuCtx.UserData != NULL)
+        {
+            HII_BROWSER_CONTEXT *HiiCtx = (HII_BROWSER_CONTEXT *)MenuCtx.UserData;
+            HiiBrowserCleanup(HiiCtx);
+            FreePool(HiiCtx);
+            MenuCtx.UserData = NULL;
         }
         
         MenuCleanup(&MenuCtx);

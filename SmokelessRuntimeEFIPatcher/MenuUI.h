@@ -84,6 +84,9 @@ typedef struct {
     UINTN TabCount;            // Number of tabs
     UINTN CurrentTabIndex;     // Currently active tab
     BOOLEAN UseTabMode;        // Enable/disable tab interface
+    
+    // User data for callbacks
+    VOID *UserData;            // Application-specific context data
 } MENU_CONTEXT;
 
 /**

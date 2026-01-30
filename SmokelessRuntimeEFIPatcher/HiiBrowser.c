@@ -724,8 +724,58 @@ EFI_STATUS HiiBrowserGetFormQuestions(
 }
 
 /**
- * Create a menu page from HII forms
+ * Callback: Open form details and show questions
  */
+EFI_STATUS HiiBrowserCallback_OpenForm(MENU_ITEM *Item, VOID *Context)
+{
+    if (Item == NULL || Item->Data == NULL || Context == NULL)
+        return EFI_INVALID_PARAMETER;
+    
+    MENU_CONTEXT *MenuCtx = (MENU_CONTEXT *)Context;
+    HII_FORM_INFO *Form = (HII_FORM_INFO *)Item->Data;
+    
+    // Get HII browser context from menu context
+    // The HiiCtx should be stored in MenuContext during initialization
+    HII_BROWSER_CONTEXT *HiiCtx = (HII_BROWSER_CONTEXT *)MenuCtx->UserData;
+    if (HiiCtx == NULL)
+    {
+        MenuShowMessage(MenuCtx, L"Error", L"HII Browser context not available!");
+        return EFI_NOT_READY;
+    }
+    
+    // Get questions for this form
+    HII_QUESTION_INFO *Questions = NULL;
+    UINTN QuestionCount = 0;
+    
+    EFI_STATUS Status = HiiBrowserGetFormQuestions(HiiCtx, Form, &Questions, &QuestionCount);
+    if (EFI_ERROR(Status))
+    {
+        MenuShowMessage(MenuCtx, L"Error", L"Failed to get form questions!");
+        return Status;
+    }
+    
+    // Create questions menu
+    MENU_PAGE *QuestionsPage = HiiBrowserCreateQuestionsMenu(HiiCtx, Form, Questions, QuestionCount);
+    if (QuestionsPage == NULL)
+    {
+        if (Questions)
+            FreePool(Questions);
+        MenuShowMessage(MenuCtx, L"Error", L"Failed to create questions menu!");
+        return EFI_OUT_OF_RESOURCES;
+    }
+    
+    // Set parent for back navigation
+    QuestionsPage->Parent = MenuCtx->CurrentPage;
+    
+    // Navigate to questions page
+    Status = MenuNavigateTo(MenuCtx, QuestionsPage);
+    
+    // Note: Don't free QuestionsPage here - it's now part of navigation stack
+    // It will be freed when user goes back
+    
+    return Status;
+}
+
 /**
  * Create a menu page from HII forms
  */
@@ -750,8 +800,8 @@ MENU_PAGE *HiiBrowserCreateFormsMenu(HII_BROWSER_CONTEXT *Context)
             Page,
             i,
             DisplayTitle,
-            Form->IsHidden ? L"[Previously Hidden/Suppressed Form]" : L"BIOS Configuration Form",
-            NULL,
+            Form->IsHidden ? L"[Previously Hidden/Suppressed Form] - Press ENTER to view" : L"Press ENTER to view form details",
+            HiiBrowserCallback_OpenForm,
             Form
         );
         
@@ -1230,8 +1280,8 @@ EFI_STATUS HiiBrowserCreateDynamicTabs(
                         TabPages[t],
                         ItemIndex,
                         Context->Forms[i].Title,
-                        Context->Forms[i].IsHidden ? L"[Previously Hidden]" : L"BIOS Configuration",
-                        NULL,
+                        Context->Forms[i].IsHidden ? L"[Previously Hidden] - Press ENTER to view" : L"Press ENTER to view details",
+                        HiiBrowserCallback_OpenForm,
                         &Context->Forms[i]
                     );
                     

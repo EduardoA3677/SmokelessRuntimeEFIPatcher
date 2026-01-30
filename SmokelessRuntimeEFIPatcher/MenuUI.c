@@ -27,9 +27,26 @@ EFI_STATUS MenuInitialize(MENU_CONTEXT *Context)
     Context->TextOut = gST->ConOut;
     Context->Running = TRUE;
     
-    // Get screen dimensions
-    Context->ScreenWidth = gST->ConOut->Mode->MaxMode > 0 ? 80 : gST->ConOut->Mode->MaxMode;
-    Context->ScreenHeight = 25;
+    // Get screen dimensions from current mode
+    UINTN Columns = 80, Rows = 25;  // Default fallback
+    EFI_STATUS Status = gST->ConOut->QueryMode(
+        gST->ConOut,
+        gST->ConOut->Mode->Mode,
+        &Columns,
+        &Rows
+    );
+    
+    if (!EFI_ERROR(Status))
+    {
+        Context->ScreenWidth = Columns;
+        Context->ScreenHeight = Rows;
+    }
+    else
+    {
+        // Fallback to standard 80x25
+        Context->ScreenWidth = 80;
+        Context->ScreenHeight = 25;
+    }
     
     // Set up default color scheme
     Context->Colors.TitleColor = COLOR_TITLE;
