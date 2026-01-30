@@ -16,7 +16,7 @@ This directory contains a complete SREP configuration for unlocking hidden BIOS 
 - Setup application execution command
 
 ### 2. SREP_CONFIG_DOCUMENTATION.md
-**Purpose**: Technical documentation and analysis  
+**Purpose**: Technical Documentation and Analysis  
 **Size**: ~9.2 KB  
 **Audience**: Advanced users, BIOS modders, researchers
 
@@ -139,7 +139,7 @@ DXE Drivers
 Original Pattern:  5365747570000001000101000100...
 Modified Pattern:  5365747570000001010101000101...
                                     ^^
-                   Changed hidden (00) to visible (01)
+                   Changed hidden (0x00) to visible (0x01)
 ```
 
 ## Usage Workflow
@@ -315,16 +315,15 @@ Documentation improvements welcome:
 - Answer questions from other users
 - Improve documentation
 
-## File Checksums
+## File Integrity
 
-For integrity verification:
+For verification, you can generate checksums using:
 
 ```bash
-# SHA256 checksums (approximate, update after finalization)
-# SREP_CONFIG.cfg: [generate checksum]
-# SREP_CONFIG_DOCUMENTATION.md: [generate checksum]
-# SREP_CONFIG_USAGE.md: [generate checksum]
+sha256sum SREP_CONFIG*.* SREP_FILES_README.md
 ```
+
+This ensures files have not been modified during transfer.
 
 ## License
 

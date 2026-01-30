@@ -249,13 +249,13 @@ If menus remain hidden after patching:
 ### IFR Analysis
 For complete unlock, analyze IFR forms:
 1. Extract Setup module with UEFITool
-2. Extract IFR section with ifrextract
+2. Extract IFR section with IFRExtract
 3. Identify suppress-if opcodes (0x5F 0x0A)
 4. Patch opcodes or conditions
 
 ### Variable Monitoring
-Monitor which variables suppress options:
-1. Enable all suppressions in SREP config
+Monitor which variables control option visibility:
+1. Apply all patches in SREP config
 2. Use UEFI variable dump tool
 3. Identify which variables control visibility
 4. Add targeted patches for those variables
