@@ -3,6 +3,7 @@
 #include <Library/UefiLib.h>
 #include <PiDxe.h>
 #include <Protocol/FirmwareVolume2.h>
+#include <Protocol/FormBrowser2.h>
 #include "BiosDetector.h"
 #include "IfrParser.h"
 
