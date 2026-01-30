@@ -3,15 +3,16 @@
 #include <Library/PrintLib.h>
 
 // Default color scheme (EFI colors)
-#define COLOR_TITLE         (EFI_YELLOW | EFI_BACKGROUND_BLUE)
-#define COLOR_NORMAL        (EFI_LIGHTGRAY | EFI_BACKGROUND_BLACK)
-#define COLOR_SELECTED      (EFI_BLACK | EFI_BACKGROUND_LIGHTGRAY)
-#define COLOR_DISABLED      (EFI_DARKGRAY | EFI_BACKGROUND_BLACK)
-#define COLOR_HIDDEN        (EFI_LIGHTGREEN | EFI_BACKGROUND_BLACK)
-#define COLOR_DESCRIPTION   (EFI_CYAN | EFI_BACKGROUND_BLACK)
-#define COLOR_BACKGROUND    (EFI_BLACK | EFI_BACKGROUND_BLACK)
-#define COLOR_TAB_ACTIVE    (EFI_WHITE | EFI_BACKGROUND_BLUE)
-#define COLOR_TAB_INACTIVE  (EFI_LIGHTGRAY | EFI_BACKGROUND_BLACK)
+// AMI BIOS Color Scheme - White background, professional appearance
+#define COLOR_TITLE         (EFI_WHITE | EFI_BACKGROUND_BLUE)
+#define COLOR_NORMAL        (EFI_BLACK | EFI_BACKGROUND_LIGHTGRAY)
+#define COLOR_SELECTED      (EFI_WHITE | EFI_BACKGROUND_BLUE)
+#define COLOR_DISABLED      (EFI_DARKGRAY | EFI_BACKGROUND_LIGHTGRAY)
+#define COLOR_HIDDEN        (EFI_DARKGRAY | EFI_BACKGROUND_LIGHTGRAY)
+#define COLOR_DESCRIPTION   (EFI_BLUE | EFI_BACKGROUND_LIGHTGRAY)
+#define COLOR_BACKGROUND    (EFI_BLACK | EFI_BACKGROUND_LIGHTGRAY)
+#define COLOR_TAB_ACTIVE    (EFI_YELLOW | EFI_BACKGROUND_BLUE)
+#define COLOR_TAB_INACTIVE  (EFI_BLACK | EFI_BACKGROUND_LIGHTGRAY)
 
 /**
  * Initialize menu system
@@ -462,17 +463,23 @@ VOID MenuDraw(MENU_CONTEXT *Context)
             break;
     }
     
-    // Draw help bar at bottom
-    ConOut->SetAttribute(ConOut, Context->Colors.DescriptionColor);
+    // Draw AMI BIOS-style status bar at bottom
+    ConOut->SetAttribute(ConOut, Context->Colors.TitleColor);
     ConOut->SetCursorPosition(ConOut, 0, Context->ScreenHeight - 2);
     
+    // Fill entire bottom line with title color background (AMI style)
+    for (UINTN i = 0; i < Context->ScreenWidth; i++)
+        ConOut->OutputString(ConOut, L" ");
+    
+    // Show keyboard shortcuts AMI BIOS style
+    ConOut->SetCursorPosition(ConOut, 2, Context->ScreenHeight - 2);
     if (Context->UseTabMode)
     {
-        ConOut->OutputString(ConOut, L"Up/Down: Navigate | Left/Right: Switch Tabs | Enter: Select | ESC: Back");
+        ConOut->OutputString(ConOut, L"← →: Select Tab | ↑ ↓: Select Item | Enter: Select | F1: Help | F9: Defaults | F10: Save | ESC: Exit");
     }
     else
     {
-        ConOut->OutputString(ConOut, L"Use Arrow Keys to navigate | Enter to select | ESC to go back");
+        ConOut->OutputString(ConOut, L"↑ ↓: Select Item | Enter: Select | F1: Help | ESC: Exit");
     }
     
     // Draw description of selected item with NULL checks
@@ -590,6 +597,37 @@ EFI_STATUS MenuHandleInput(MENU_CONTEXT *Context, EFI_INPUT_KEY *Key)
     {
         // Go back to parent menu
         return MenuGoBack(Context);
+    }
+    
+    // Handle AMI BIOS function keys
+    if (Key->ScanCode == SCAN_F1)
+    {
+        // F1: Help (Context-sensitive help)
+        MenuShowMessage(Context, L"Help", L"F1=Help  F9=Defaults  F10=Save&Exit  ESC=Back");
+        return EFI_SUCCESS;
+    }
+    else if (Key->ScanCode == SCAN_F9)
+    {
+        // F9: Load Setup Defaults / Optimized Defaults
+        MenuShowMessage(Context, L"Load Defaults", L"Load optimized default settings? (Not implemented)");
+        return EFI_SUCCESS;
+    }
+    else if (Key->ScanCode == SCAN_F10)
+    {
+        // F10: Save and Exit
+        MenuShowMessage(Context, L"Save & Exit", L"Save changes and exit? Press ESC to confirm exit.");
+        return EFI_SUCCESS;
+    }
+    else if (Key->ScanCode == SCAN_F5)
+    {
+        // F5/F6: Change values (for current item if applicable)
+        // Could be used to decrement/increment numeric values
+        return EFI_SUCCESS;
+    }
+    else if (Key->ScanCode == SCAN_F6)
+    {
+        // F6: Increment value
+        return EFI_SUCCESS;
     }
     
     // Handle Enter key
