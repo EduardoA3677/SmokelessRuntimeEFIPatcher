@@ -442,3 +442,308 @@ VOID NvramCleanup(NVRAM_MANAGER *Manager)
     
     ZeroMem(Manager, sizeof(NVRAM_MANAGER));
 }
+
+/**
+ * Initialize database context for configuration storage
+ */
+EFI_STATUS DatabaseInitialize(DATABASE_CONTEXT *DbContext)
+{
+    if (DbContext == NULL)
+        return EFI_INVALID_PARAMETER;
+    
+    ZeroMem(DbContext, sizeof(DATABASE_CONTEXT));
+    
+    // Allocate initial capacity
+    DbContext->EntryCapacity = 100;
+    DbContext->Entries = AllocateZeroPool(sizeof(DATABASE_ENTRY) * DbContext->EntryCapacity);
+    
+    if (DbContext->Entries == NULL)
+        return EFI_OUT_OF_RESOURCES;
+    
+    DbContext->EntryCount = 0;
+    
+    return EFI_SUCCESS;
+}
+
+/**
+ * Add a configuration entry to the database
+ */
+EFI_STATUS DatabaseAddEntry(
+    DATABASE_CONTEXT *DbContext,
+    UINT16 QuestionId,
+    CHAR16 *VariableName,
+    EFI_GUID *VariableGuid,
+    UINTN Offset,
+    UINTN Size,
+    UINT8 Type,
+    UINT64 Value
+)
+{
+    if (DbContext == NULL || VariableName == NULL || VariableGuid == NULL)
+        return EFI_INVALID_PARAMETER;
+    
+    // Check if we need to expand capacity
+    if (DbContext->EntryCount >= DbContext->EntryCapacity)
+    {
+        UINTN NewCapacity = DbContext->EntryCapacity * 2;
+        DATABASE_ENTRY *NewEntries = AllocateZeroPool(sizeof(DATABASE_ENTRY) * NewCapacity);
+        
+        if (NewEntries == NULL)
+            return EFI_OUT_OF_RESOURCES;
+        
+        CopyMem(NewEntries, DbContext->Entries, sizeof(DATABASE_ENTRY) * DbContext->EntryCount);
+        FreePool(DbContext->Entries);
+        DbContext->Entries = NewEntries;
+        DbContext->EntryCapacity = NewCapacity;
+    }
+    
+    // Add new entry
+    DATABASE_ENTRY *Entry = &DbContext->Entries[DbContext->EntryCount];
+    Entry->QuestionId = QuestionId;
+    Entry->VariableName = AllocateCopyPool(StrSize(VariableName), VariableName);
+    CopyMem(&Entry->VariableGuid, VariableGuid, sizeof(EFI_GUID));
+    Entry->Offset = Offset;
+    Entry->Size = Size;
+    Entry->Type = Type;
+    Entry->Value = Value;
+    Entry->Modified = FALSE;
+    
+    DbContext->EntryCount++;
+    
+    return EFI_SUCCESS;
+}
+
+/**
+ * Update a configuration value in the database
+ */
+EFI_STATUS DatabaseUpdateValue(
+    DATABASE_CONTEXT *DbContext,
+    UINT16 QuestionId,
+    UINT64 NewValue
+)
+{
+    if (DbContext == NULL)
+        return EFI_INVALID_PARAMETER;
+    
+    // Find the entry
+    for (UINTN i = 0; i < DbContext->EntryCount; i++)
+    {
+        if (DbContext->Entries[i].QuestionId == QuestionId)
+        {
+            DbContext->Entries[i].Value = NewValue;
+            DbContext->Entries[i].Modified = TRUE;
+            return EFI_SUCCESS;
+        }
+    }
+    
+    return EFI_NOT_FOUND;
+}
+
+/**
+ * Commit database changes to NVRAM variables
+ * 
+ * This function writes modified configuration values from the database
+ * back to their corresponding NVRAM variables at the correct offsets.
+ */
+EFI_STATUS DatabaseCommitToNvram(
+    DATABASE_CONTEXT *DbContext,
+    NVRAM_MANAGER *NvramManager
+)
+{
+    EFI_STATUS Status;
+    UINTN CommitCount = 0;
+    
+    if (DbContext == NULL || NvramManager == NULL)
+        return EFI_INVALID_PARAMETER;
+    
+    // Group entries by variable name for efficient batch updates
+    for (UINTN i = 0; i < DbContext->EntryCount; i++)
+    {
+        DATABASE_ENTRY *Entry = &DbContext->Entries[i];
+        
+        // Skip unmodified entries
+        if (!Entry->Modified)
+            continue;
+        
+        // Find the corresponding NVRAM variable
+        NVRAM_VARIABLE *Var = NULL;
+        for (UINTN v = 0; v < NvramManager->VariableCount; v++)
+        {
+            if (StrCmp(NvramManager->Variables[v].Name, Entry->VariableName) == 0 &&
+                CompareMem(&NvramManager->Variables[v].Guid, &Entry->VariableGuid, sizeof(EFI_GUID)) == 0)
+            {
+                Var = &NvramManager->Variables[v];
+                break;
+            }
+        }
+        
+        if (Var == NULL)
+        {
+            Print(L"Warning: Variable %s not found for QuestionId %d\n", Entry->VariableName, Entry->QuestionId);
+            continue;
+        }
+        
+        // Ensure the variable data is large enough
+        if (Entry->Offset + Entry->Size > Var->DataSize)
+        {
+            Print(L"Error: Offset %d + Size %d exceeds variable size %d for %s\n",
+                  Entry->Offset, Entry->Size, Var->DataSize, Entry->VariableName);
+            continue;
+        }
+        
+        // Write value to the correct offset based on size
+        UINT8 *DataPtr = (UINT8 *)Var->Data + Entry->Offset;
+        
+        switch (Entry->Size)
+        {
+            case 1:
+                *(UINT8 *)DataPtr = (UINT8)Entry->Value;
+                break;
+            case 2:
+                *(UINT16 *)DataPtr = (UINT16)Entry->Value;
+                break;
+            case 4:
+                *(UINT32 *)DataPtr = (UINT32)Entry->Value;
+                break;
+            case 8:
+                *(UINT64 *)DataPtr = Entry->Value;
+                break;
+            default:
+                Print(L"Warning: Unsupported size %d for QuestionId %d\n", Entry->Size, Entry->QuestionId);
+                continue;
+        }
+        
+        // Mark variable as modified
+        if (!Var->Modified)
+        {
+            Var->Modified = TRUE;
+            NvramManager->ModifiedCount++;
+        }
+        
+        // Mark database entry as committed
+        Entry->Modified = FALSE;
+        CommitCount++;
+    }
+    
+    Print(L"Database: Committed %d configuration changes to NVRAM variables\n", CommitCount);
+    
+    // Now commit all modified variables to NVRAM
+    if (CommitCount > 0)
+    {
+        Status = NvramCommitChanges(NvramManager);
+        if (EFI_ERROR(Status))
+        {
+            Print(L"Error: Failed to commit NVRAM changes: %r\n", Status);
+            return Status;
+        }
+    }
+    
+    return EFI_SUCCESS;
+}
+
+/**
+ * Load configuration values from NVRAM into database
+ */
+EFI_STATUS DatabaseLoadFromNvram(
+    DATABASE_CONTEXT *DbContext,
+    NVRAM_MANAGER *NvramManager
+)
+{
+    if (DbContext == NULL || NvramManager == NULL)
+        return EFI_INVALID_PARAMETER;
+    
+    UINTN LoadedCount = 0;
+    
+    // Load values from NVRAM into database entries
+    for (UINTN i = 0; i < DbContext->EntryCount; i++)
+    {
+        DATABASE_ENTRY *Entry = &DbContext->Entries[i];
+        
+        // Find the corresponding NVRAM variable
+        for (UINTN v = 0; v < NvramManager->VariableCount; v++)
+        {
+            NVRAM_VARIABLE *Var = &NvramManager->Variables[v];
+            
+            if (StrCmp(Var->Name, Entry->VariableName) == 0 &&
+                CompareMem(&Var->Guid, &Entry->VariableGuid, sizeof(EFI_GUID)) == 0)
+            {
+                // Ensure offset is within bounds
+                if (Entry->Offset + Entry->Size <= Var->DataSize)
+                {
+                    UINT8 *DataPtr = (UINT8 *)Var->Data + Entry->Offset;
+                    
+                    // Read value based on size
+                    switch (Entry->Size)
+                    {
+                        case 1:
+                            Entry->Value = *(UINT8 *)DataPtr;
+                            break;
+                        case 2:
+                            Entry->Value = *(UINT16 *)DataPtr;
+                            break;
+                        case 4:
+                            Entry->Value = *(UINT32 *)DataPtr;
+                            break;
+                        case 8:
+                            Entry->Value = *(UINT64 *)DataPtr;
+                            break;
+                    }
+                    
+                    LoadedCount++;
+                }
+                break;
+            }
+        }
+    }
+    
+    Print(L"Database: Loaded %d configuration values from NVRAM\n", LoadedCount);
+    
+    return LoadedCount > 0 ? EFI_SUCCESS : EFI_NOT_FOUND;
+}
+
+/**
+ * Get a configuration value from the database
+ */
+EFI_STATUS DatabaseGetValue(
+    DATABASE_CONTEXT *DbContext,
+    UINT16 QuestionId,
+    UINT64 *Value
+)
+{
+    if (DbContext == NULL || Value == NULL)
+        return EFI_INVALID_PARAMETER;
+    
+    // Find the entry
+    for (UINTN i = 0; i < DbContext->EntryCount; i++)
+    {
+        if (DbContext->Entries[i].QuestionId == QuestionId)
+        {
+            *Value = DbContext->Entries[i].Value;
+            return EFI_SUCCESS;
+        }
+    }
+    
+    return EFI_NOT_FOUND;
+}
+
+/**
+ * Clean up database context
+ */
+VOID DatabaseCleanup(DATABASE_CONTEXT *DbContext)
+{
+    if (DbContext == NULL)
+        return;
+    
+    // Free all variable names
+    for (UINTN i = 0; i < DbContext->EntryCount; i++)
+    {
+        if (DbContext->Entries[i].VariableName != NULL)
+            FreePool(DbContext->Entries[i].VariableName);
+    }
+    
+    // Free entries array
+    if (DbContext->Entries != NULL)
+        FreePool(DbContext->Entries);
+    
+    ZeroMem(DbContext, sizeof(DATABASE_CONTEXT));
+}

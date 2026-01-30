@@ -86,7 +86,8 @@ typedef struct {
     HII_FORM_INFO *Forms;
     UINTN FormCount;
     
-    NVRAM_MANAGER *NvramManager;  // NEW: NVRAM manager
+    NVRAM_MANAGER *NvramManager;  // NVRAM manager
+    DATABASE_CONTEXT *Database;   // Configuration database
     MENU_CONTEXT *MenuContext;
 } HII_BROWSER_CONTEXT;
 

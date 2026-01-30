@@ -82,6 +82,29 @@ EFI_STATUS HiiBrowserInitialize(HII_BROWSER_CONTEXT *Context)
         // Continue anyway
     }
     
+    // Initialize configuration database
+    Context->Database = AllocateZeroPool(sizeof(DATABASE_CONTEXT));
+    if (Context->Database == NULL)
+    {
+        Print(L"Warning: Could not allocate database context\n");
+        // Continue without database
+    }
+    else
+    {
+        Status = DatabaseInitialize(Context->Database);
+        if (EFI_ERROR(Status))
+        {
+            Print(L"Warning: Failed to initialize database: %r\n", Status);
+            FreePool(Context->Database);
+            Context->Database = NULL;
+            // Continue anyway
+        }
+        else
+        {
+            Print(L"Database initialized successfully\n");
+        }
+    }
+    
     return EFI_SUCCESS;
 }
 
@@ -1716,6 +1739,12 @@ VOID HiiBrowserCleanup(HII_BROWSER_CONTEXT *Context)
                 FreePool(Form->Title);
         }
         FreePool(Context->Forms);
+    }
+    
+    if (Context->Database)
+    {
+        DatabaseCleanup(Context->Database);
+        FreePool(Context->Database);
     }
     
     if (Context->NvramManager)

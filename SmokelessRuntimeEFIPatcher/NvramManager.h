@@ -4,6 +4,25 @@
 #include <Library/UefiRuntimeServicesTableLib.h>
 #include <Protocol/HiiConfigAccess.h>
 
+// Database entry structure for configuration storage
+typedef struct {
+    UINT16 QuestionId;      // IFR Question ID
+    CHAR16 *VariableName;   // NVRAM variable name
+    EFI_GUID VariableGuid;  // NVRAM variable GUID
+    UINTN Offset;           // Offset within variable
+    UINTN Size;             // Size of value (1, 2, 4, or 8 bytes)
+    UINT8 Type;             // Question type (checkbox, numeric, etc.)
+    UINT64 Value;           // Current value
+    BOOLEAN Modified;       // Has been modified
+} DATABASE_ENTRY;
+
+// Database context for managing configuration storage
+typedef struct {
+    DATABASE_ENTRY *Entries;
+    UINTN EntryCount;
+    UINTN EntryCapacity;
+} DATABASE_CONTEXT;
+
 // NVRAM Variable information
 typedef struct {
     CHAR16 *Name;
@@ -91,6 +110,64 @@ EFI_STATUS NvramListVariables(NVRAM_MANAGER *Manager);
  * Clean up NVRAM manager
  */
 VOID NvramCleanup(NVRAM_MANAGER *Manager);
+
+/**
+ * Initialize database context for configuration storage
+ */
+EFI_STATUS DatabaseInitialize(DATABASE_CONTEXT *DbContext);
+
+/**
+ * Add a configuration entry to the database
+ */
+EFI_STATUS DatabaseAddEntry(
+    DATABASE_CONTEXT *DbContext,
+    UINT16 QuestionId,
+    CHAR16 *VariableName,
+    EFI_GUID *VariableGuid,
+    UINTN Offset,
+    UINTN Size,
+    UINT8 Type,
+    UINT64 Value
+);
+
+/**
+ * Update a configuration value in the database
+ */
+EFI_STATUS DatabaseUpdateValue(
+    DATABASE_CONTEXT *DbContext,
+    UINT16 QuestionId,
+    UINT64 NewValue
+);
+
+/**
+ * Commit database changes to NVRAM variables
+ */
+EFI_STATUS DatabaseCommitToNvram(
+    DATABASE_CONTEXT *DbContext,
+    NVRAM_MANAGER *NvramManager
+);
+
+/**
+ * Load configuration values from NVRAM into database
+ */
+EFI_STATUS DatabaseLoadFromNvram(
+    DATABASE_CONTEXT *DbContext,
+    NVRAM_MANAGER *NvramManager
+);
+
+/**
+ * Get a configuration value from the database
+ */
+EFI_STATUS DatabaseGetValue(
+    DATABASE_CONTEXT *DbContext,
+    UINT16 QuestionId,
+    UINT64 *Value
+);
+
+/**
+ * Clean up database context
+ */
+VOID DatabaseCleanup(DATABASE_CONTEXT *DbContext);
 
 // Common BIOS variable GUIDs
 extern EFI_GUID gSetupVariableGuid;
