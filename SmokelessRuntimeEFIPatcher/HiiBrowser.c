@@ -1107,9 +1107,12 @@ STATIC UINTN CategorizeForm(CHAR16 *Title)
         return 0;  // Main by default
     
     // Convert to uppercase for comparison
-    CHAR16 Upper[128];
+    CHAR16 Upper[MAX_TITLE_LENGTH];
     UINTN Len = StrLen(Title);
-    if (Len >= 128) Len = 127;
+    
+    // Cap length to prevent buffer overflow
+    if (Len >= MAX_TITLE_LENGTH) 
+        Len = MAX_TITLE_LENGTH - 1;
     
     for (UINTN i = 0; i < Len; i++)
     {
@@ -1118,7 +1121,7 @@ STATIC UINTN CategorizeForm(CHAR16 *Title)
         else
             Upper[i] = Title[i];
     }
-    Upper[Len] = 0;
+    Upper[Len] = 0;  // Null terminate within bounds
     
     // Check for keywords
     if (StrStr(Upper, L"MAIN") != NULL || StrStr(Upper, L"SYSTEM") != NULL || 
@@ -1228,10 +1231,11 @@ EFI_STATUS HiiBrowserCreateDynamicTabs(
                 ItemIndex++;
             }
             
-            if (ItemIndex < ItemCount - 1)
+            if (Count < Capacity)
             {
-                CHAR16 InfoText[100];
-                UnicodeSPrint(InfoText, sizeof(InfoText), L"%d configuration form(s) in this category", TabFormCounts[t]);
+                CHAR16 InfoText[MAX_DESCRIPTION_LENGTH];
+                UnicodeSPrint(InfoText, sizeof(InfoText), 
+                             L"%d configuration form(s) in this category", TabFormCounts[t]);
                 MenuAddInfoItem(TabPages[t], ItemIndex, InfoText);
             }
         }
