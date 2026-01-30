@@ -201,13 +201,17 @@ EFI_STATUS MenuCallback_BrowseSettings(MENU_ITEM *Item, VOID *Context)
     HII_BROWSER_CONTEXT HiiCtx;
     EFI_STATUS Status;
     
-    // Initialize HII browser
+    MenuShowMessage(MenuCtx, L"Loading", L"Loading BIOS modules and NVRAM data...");
+    
+    // Initialize HII browser (includes NVRAM loading)
     Status = HiiBrowserInitialize(&HiiCtx);
     if (EFI_ERROR(Status))
     {
         MenuShowMessage(MenuCtx, L"Error", L"Failed to initialize HII browser!");
         return Status;
     }
+    
+    HiiCtx.MenuContext = MenuCtx;
     
     // Enumerate forms
     Status = HiiBrowserEnumerateForms(&HiiCtx);
@@ -231,6 +235,107 @@ EFI_STATUS MenuCallback_BrowseSettings(MENU_ITEM *Item, VOID *Context)
     
     // Cleanup
     MenuFreePage(FormsMenu);
+    HiiBrowserCleanup(&HiiCtx);
+    
+    return EFI_SUCCESS;
+}
+
+/**
+ * Callback: Load BIOS modules and edit settings
+ */
+EFI_STATUS MenuCallback_LoadAndEdit(MENU_ITEM *Item, VOID *Context)
+{
+    MENU_CONTEXT *MenuCtx = (MENU_CONTEXT *)Context;
+    SREP_CONTEXT *SrepCtx = (SREP_CONTEXT *)Item->Data;
+    HII_BROWSER_CONTEXT HiiCtx;
+    EFI_STATUS Status;
+    
+    MenuShowMessage(MenuCtx, L"Loading", L"Detecting BIOS and loading modules...");
+    
+    // Detect BIOS type
+    Status = DetectBiosType(&SrepCtx->BiosInfo);
+    if (EFI_ERROR(Status))
+    {
+        MenuShowMessage(MenuCtx, L"Error", L"BIOS detection failed!");
+        return Status;
+    }
+    
+    // Load Setup modules (without launching yet)
+    Print(L"\nLoading BIOS modules...\n\r");
+    Print(L"BIOS Type: %s\n\r", GetBiosTypeString(SrepCtx->BiosInfo.Type));
+    Print(L"Vendor: %s\n\r", SrepCtx->BiosInfo.VendorName);
+    
+    // Initialize HII browser with NVRAM
+    Status = HiiBrowserInitialize(&HiiCtx);
+    if (EFI_ERROR(Status))
+    {
+        MenuShowMessage(MenuCtx, L"Error", L"Failed to initialize HII browser!");
+        return Status;
+    }
+    
+    HiiCtx.MenuContext = MenuCtx;
+    
+    // Enumerate forms
+    Status = HiiBrowserEnumerateForms(&HiiCtx);
+    if (EFI_ERROR(Status))
+    {
+        MenuShowMessage(MenuCtx, L"Error", L"Failed to enumerate BIOS forms!");
+        HiiBrowserCleanup(&HiiCtx);
+        return Status;
+    }
+    
+    // Show success
+    CHAR16 SuccessMsg[256];
+    UnicodeSPrint(SuccessMsg, sizeof(SuccessMsg),
+                  L"Loaded %d BIOS forms\n%d NVRAM variables loaded",
+                  HiiCtx.FormCount,
+                  HiiCtx.NvramManager ? HiiCtx.NvramManager->VariableCount : 0);
+    
+    MenuShowMessage(MenuCtx, L"Success", SuccessMsg);
+    
+    // Create forms menu with edit capability
+    MENU_PAGE *FormsMenu = HiiBrowserCreateFormsMenu(&HiiCtx);
+    if (FormsMenu == NULL)
+    {
+        MenuShowMessage(MenuCtx, L"Error", L"Failed to create forms menu!");
+        HiiBrowserCleanup(&HiiCtx);
+        return EFI_OUT_OF_RESOURCES;
+    }
+    
+    // Add save option at the end
+    MENU_PAGE *EditMenu = MenuCreatePage(L"BIOS Settings Editor", FormsMenu->ItemCount + 2);
+    if (EditMenu)
+    {
+        // Copy form items
+        for (UINTN i = 0; i < FormsMenu->ItemCount; i++)
+        {
+            EditMenu->Items[i] = FormsMenu->Items[i];
+        }
+        
+        // Add separator and save option
+        MenuAddSeparator(EditMenu, FormsMenu->ItemCount, NULL);
+        MenuAddActionItem(
+            EditMenu,
+            FormsMenu->ItemCount + 1,
+            L"Save Changes to NVRAM",
+            L"Write modified values to BIOS NVRAM",
+            NULL,  // We'll handle this inline
+            &HiiCtx
+        );
+        
+        MenuNavigateTo(MenuCtx, EditMenu);
+        
+        MenuFreePage(EditMenu);
+    }
+    
+    MenuFreePage(FormsMenu);
+    
+    // Save changes if any modifications were made
+    if (HiiCtx.NvramManager && NvramGetModifiedCount(HiiCtx.NvramManager) > 0)
+    {
+        HiiBrowserSaveChanges(&HiiCtx);
+    }
+    
     HiiBrowserCleanup(&HiiCtx);
     
     return EFI_SUCCESS;
@@ -304,7 +409,7 @@ EFI_STATUS MenuCallback_Exit(MENU_ITEM *Item, VOID *Context)
  */
 MENU_PAGE *CreateMainMenu(SREP_CONTEXT *SrepCtx)
 {
-    MENU_PAGE *MainMenu = MenuCreatePage(L"SmokelessRuntimeEFIPatcher - Main Menu", 8);
+    MENU_PAGE *MainMenu = MenuCreatePage(L"SmokelessRuntimeEFIPatcher - Main Menu", 10);
     if (MainMenu == NULL)
         return NULL;
     
@@ -321,32 +426,36 @@ MENU_PAGE *CreateMainMenu(SREP_CONTEXT *SrepCtx)
     
     MenuAddActionItem(
         MainMenu, 3,
-        L"Browse BIOS Settings",
-        L"View BIOS settings (read-only)",
+        L"Load Modules and Edit Settings",
+        L"Load BIOS modules and edit NVRAM settings",
+        MenuCallback_LoadAndEdit,
+        SrepCtx
+    );
+    
+    MenuAddActionItem(
+        MainMenu, 4,
+        L"Browse BIOS Settings (Read-Only)",
+        L"View BIOS settings without editing",
         MenuCallback_BrowseSettings,
         NULL
     );
     
     MenuAddActionItem(
-        MainMenu, 4,
+        MainMenu, 5,
         L"Launch Setup Browser",
         L"Launch BIOS Setup Browser directly",
         MenuCallback_LaunchSetup,
         NULL
     );
     
-    MenuAddSeparator(MainMenu, 5, NULL);
+    MenuAddSeparator(MainMenu, 6, NULL);
+    
+    MenuAddInfoItem(MainMenu, 7, L"Changes saved to NVRAM persist across reboots");
+    
+    MenuAddSeparator(MainMenu, 8, NULL);
     
     MenuAddActionItem(
-        MainMenu, 6,
-        L"About",
-        L"Information about this tool",
-        MenuCallback_About,
-        NULL
-    );
-    
-    MenuAddActionItem(
-        MainMenu, 7,
+        MainMenu, 9,
         L"Exit",
         L"Exit to UEFI Shell or Boot Menu",
         MenuCallback_Exit,

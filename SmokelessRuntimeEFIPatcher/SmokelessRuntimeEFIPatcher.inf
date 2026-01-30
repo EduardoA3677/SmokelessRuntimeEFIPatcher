@@ -17,6 +17,7 @@
   AutoPatcher.c
   MenuUI.c
   HiiBrowser.c
+  NvramManager.c
 [Packages]
 	MdePkg/MdePkg.dec
   MdeModulePkg/MdeModulePkg.dec

@@ -5,6 +5,7 @@
 #include <Protocol/HiiConfigAccess.h>
 #include <Protocol/FormBrowser2.h>
 #include "MenuUI.h"
+#include "NvramManager.h"
 
 // HII Form information
 typedef struct {
@@ -23,8 +24,15 @@ typedef struct {
     UINT8 Type;             // Question type (checkbox, numeric, etc)
     VOID *CurrentValue;
     VOID *DefaultValue;
+    UINT64 Minimum;         // For numeric types
+    UINT64 Maximum;
+    UINT64 Step;
+    CHAR16 *VariableName;   // NVRAM variable name
+    EFI_GUID VariableGuid;  // NVRAM variable GUID
+    UINTN VariableOffset;   // Offset in variable
     BOOLEAN IsHidden;       // Was this option suppressed/hidden
     BOOLEAN IsGrayedOut;    // Was this option grayed out
+    BOOLEAN IsModified;     // Has value been changed
 } HII_QUESTION_INFO;
 
 // HII Browser context
@@ -36,6 +44,7 @@ typedef struct {
     HII_FORM_INFO *Forms;
     UINTN FormCount;
     
+    NVRAM_MANAGER *NvramManager;  // NEW: NVRAM manager
     MENU_CONTEXT *MenuContext;
 } HII_BROWSER_CONTEXT;
 
@@ -75,7 +84,7 @@ MENU_PAGE *HiiBrowserCreateQuestionsMenu(
 );
 
 /**
- * Get current value of a question
+ * Get current value of a question from NVRAM
  */
 EFI_STATUS HiiBrowserGetQuestionValue(
     HII_BROWSER_CONTEXT *Context,
@@ -84,13 +93,26 @@ EFI_STATUS HiiBrowserGetQuestionValue(
 );
 
 /**
- * Set value of a question
+ * Set value of a question (stage for save)
  */
 EFI_STATUS HiiBrowserSetQuestionValue(
     HII_BROWSER_CONTEXT *Context,
     HII_QUESTION_INFO *Question,
     VOID *Value
 );
+
+/**
+ * Edit a question value interactively
+ */
+EFI_STATUS HiiBrowserEditQuestion(
+    HII_BROWSER_CONTEXT *Context,
+    HII_QUESTION_INFO *Question
+);
+
+/**
+ * Save all modified values to NVRAM
+ */
+EFI_STATUS HiiBrowserSaveChanges(HII_BROWSER_CONTEXT *Context);
 
 /**
  * Clean up HII browser resources

@@ -48,6 +48,28 @@ EFI_STATUS HiiBrowserInitialize(HII_BROWSER_CONTEXT *Context)
     );
     // Don't fail if FormBrowser2 is not available yet
     
+    // Initialize NVRAM manager
+    Context->NvramManager = AllocateZeroPool(sizeof(NVRAM_MANAGER));
+    if (Context->NvramManager == NULL)
+        return EFI_OUT_OF_RESOURCES;
+    
+    Status = NvramInitialize(Context->NvramManager);
+    if (EFI_ERROR(Status))
+    {
+        Print(L"Failed to initialize NVRAM manager: %r\n", Status);
+        FreePool(Context->NvramManager);
+        Context->NvramManager = NULL;
+        return Status;
+    }
+    
+    // Load Setup variables
+    Status = NvramLoadSetupVariables(Context->NvramManager);
+    if (EFI_ERROR(Status))
+    {
+        Print(L"Warning: Could not load Setup variables: %r\n", Status);
+        // Continue anyway
+    }
+    
     return EFI_SUCCESS;
 }
 
@@ -252,7 +274,7 @@ MENU_PAGE *HiiBrowserCreateQuestionsMenu(
 }
 
 /**
- * Get current value of a question
+ * Get current value of a question from NVRAM
  */
 EFI_STATUS HiiBrowserGetQuestionValue(
     HII_BROWSER_CONTEXT *Context,
@@ -263,12 +285,45 @@ EFI_STATUS HiiBrowserGetQuestionValue(
     if (Context == NULL || Question == NULL || Value == NULL)
         return EFI_INVALID_PARAMETER;
     
-    // Placeholder - would use HII Config Access Protocol
-    return EFI_UNSUPPORTED;
+    // If we have NVRAM info, read from variable
+    if (Question->VariableName && Context->NvramManager)
+    {
+        VOID *VarData = NULL;
+        UINTN VarSize = 0;
+        
+        EFI_STATUS Status = NvramReadVariable(
+            Context->NvramManager,
+            Question->VariableName,
+            &Question->VariableGuid,
+            &VarData,
+            &VarSize
+        );
+        
+        if (!EFI_ERROR(Status) && VarData)
+        {
+            // Extract value at offset
+            if (Question->VariableOffset < VarSize)
+            {
+                CopyMem(Value, (UINT8 *)VarData + Question->VariableOffset, sizeof(UINT64));
+                FreePool(VarData);
+                return EFI_SUCCESS;
+            }
+            FreePool(VarData);
+        }
+    }
+    
+    // Fallback to current value if set
+    if (Question->CurrentValue)
+    {
+        CopyMem(Value, Question->CurrentValue, sizeof(UINT64));
+        return EFI_SUCCESS;
+    }
+    
+    return EFI_NOT_FOUND;
 }
 
 /**
- * Set value of a question
+ * Set value of a question (stage for save)
  */
 EFI_STATUS HiiBrowserSetQuestionValue(
     HII_BROWSER_CONTEXT *Context,
@@ -279,8 +334,190 @@ EFI_STATUS HiiBrowserSetQuestionValue(
     if (Context == NULL || Question == NULL || Value == NULL)
         return EFI_INVALID_PARAMETER;
     
-    // Placeholder - would use HII Config Access Protocol
+    // If we have NVRAM info, stage the change
+    if (Question->VariableName && Context->NvramManager)
+    {
+        // Read current variable
+        VOID *VarData = NULL;
+        UINTN VarSize = 0;
+        
+        EFI_STATUS Status = NvramReadVariable(
+            Context->NvramManager,
+            Question->VariableName,
+            &Question->VariableGuid,
+            &VarData,
+            &VarSize
+        );
+        
+        if (EFI_ERROR(Status) || !VarData)
+        {
+            // Variable doesn't exist, create it
+            VarSize = Question->VariableOffset + sizeof(UINT64);
+            VarData = AllocateZeroPool(VarSize);
+            if (!VarData)
+                return EFI_OUT_OF_RESOURCES;
+        }
+        
+        // Update value at offset
+        CopyMem((UINT8 *)VarData + Question->VariableOffset, Value, sizeof(UINT64));
+        
+        // Stage for save
+        Status = NvramStageVariable(
+            Context->NvramManager,
+            Question->VariableName,
+            &Question->VariableGuid,
+            VarData,
+            VarSize
+        );
+        
+        FreePool(VarData);
+        
+        if (!EFI_ERROR(Status))
+        {
+            Question->IsModified = TRUE;
+        }
+        
+        return Status;
+    }
+    
     return EFI_UNSUPPORTED;
+}
+
+/**
+ * Edit a question value interactively
+ */
+EFI_STATUS HiiBrowserEditQuestion(
+    HII_BROWSER_CONTEXT *Context,
+    HII_QUESTION_INFO *Question
+)
+{
+    if (Context == NULL || Question == NULL || Context->MenuContext == NULL)
+        return EFI_INVALID_PARAMETER;
+    
+    // Get current value
+    UINT64 CurrentValue = 0;
+    HiiBrowserGetQuestionValue(Context, Question, &CurrentValue);
+    
+    // Show edit dialog
+    CHAR16 Message[256];
+    UnicodeSPrint(Message, sizeof(Message), 
+                  L"Current: %d\nMin: %d, Max: %d\nUse +/- to change, Enter to save, ESC to cancel",
+                  CurrentValue, Question->Minimum, Question->Maximum);
+    
+    EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *ConOut = gST->ConOut;
+    EFI_SIMPLE_TEXT_INPUT_PROTOCOL *ConIn = gST->ConIn;
+    
+    UINT64 NewValue = CurrentValue;
+    BOOLEAN Done = FALSE;
+    
+    while (!Done)
+    {
+        // Draw edit dialog
+        ConOut->SetAttribute(ConOut, EFI_TEXT_ATTR(EFI_LIGHTGRAY, EFI_BLACK));
+        ConOut->SetCursorPosition(ConOut, 10, 10);
+        ConOut->OutputString(ConOut, L"+--------------------------------------------------+");
+        ConOut->SetCursorPosition(ConOut, 10, 11);
+        ConOut->OutputString(ConOut, L"| Edit Value                                       |");
+        ConOut->SetCursorPosition(ConOut, 10, 12);
+        ConOut->OutputString(ConOut, L"|                                                  |");
+        
+        CHAR16 ValueStr[50];
+        UnicodeSPrint(ValueStr, sizeof(ValueStr), L"| Value: %d", NewValue);
+        ConOut->SetCursorPosition(ConOut, 10, 12);
+        ConOut->OutputString(ConOut, ValueStr);
+        
+        ConOut->SetCursorPosition(ConOut, 10, 13);
+        ConOut->OutputString(ConOut, L"|                                                  |");
+        ConOut->SetCursorPosition(ConOut, 10, 14);
+        ConOut->OutputString(ConOut, L"| +/- to change | Enter to save | ESC to cancel   |");
+        ConOut->SetCursorPosition(ConOut, 10, 15);
+        ConOut->OutputString(ConOut, L"+--------------------------------------------------+");
+        
+        // Wait for input
+        UINTN Index;
+        gBS->WaitForEvent(1, &ConIn->WaitForKey, &Index);
+        
+        EFI_INPUT_KEY Key;
+        ConIn->ReadKeyStroke(ConIn, &Key);
+        
+        if (Key.UnicodeChar == L'+' || Key.UnicodeChar == L'=')
+        {
+            if (NewValue < Question->Maximum)
+                NewValue += Question->Step > 0 ? Question->Step : 1;
+        }
+        else if (Key.UnicodeChar == L'-' || Key.UnicodeChar == L'_')
+        {
+            if (NewValue > Question->Minimum)
+                NewValue -= Question->Step > 0 ? Question->Step : 1;
+        }
+        else if (Key.UnicodeChar == CHAR_CARRIAGE_RETURN)
+        {
+            // Save the value
+            HiiBrowserSetQuestionValue(Context, Question, &NewValue);
+            Done = TRUE;
+        }
+        else if (Key.ScanCode == SCAN_ESC)
+        {
+            // Cancel
+            Done = TRUE;
+        }
+    }
+    
+    // Redraw menu
+    if (Context->MenuContext)
+        MenuDraw(Context->MenuContext);
+    
+    return EFI_SUCCESS;
+}
+
+/**
+ * Save all modified values to NVRAM
+ */
+EFI_STATUS HiiBrowserSaveChanges(HII_BROWSER_CONTEXT *Context)
+{
+    if (Context == NULL || Context->NvramManager == NULL)
+        return EFI_INVALID_PARAMETER;
+    
+    UINTN ModifiedCount = NvramGetModifiedCount(Context->NvramManager);
+    
+    if (ModifiedCount == 0)
+    {
+        if (Context->MenuContext)
+            MenuShowMessage(Context->MenuContext, L"No Changes", L"No modified values to save");
+        return EFI_SUCCESS;
+    }
+    
+    // Show confirmation
+    BOOLEAN Confirm = FALSE;
+    CHAR16 ConfirmMsg[256];
+    UnicodeSPrint(ConfirmMsg, sizeof(ConfirmMsg), 
+                  L"Save %d modified variables to NVRAM?", ModifiedCount);
+    
+    if (Context->MenuContext)
+    {
+        MenuShowConfirm(Context->MenuContext, L"Confirm Save", ConfirmMsg, &Confirm);
+    }
+    else
+    {
+        // No menu context, assume confirmed
+        Confirm = TRUE;
+    }
+    
+    if (!Confirm)
+        return EFI_ABORTED;
+    
+    // Commit changes
+    EFI_STATUS Status = NvramCommitChanges(Context->NvramManager);
+    
+    if (Context->MenuContext)
+    {
+        if (EFI_ERROR(Status))
+            MenuShowMessage(Context->MenuContext, L"Error", L"Failed to save some variables");
+        else
+            MenuShowMessage(Context->MenuContext, L"Success", L"All changes saved to NVRAM");
+    }
+    
+    return Status;
 }
 
 /**
@@ -300,5 +537,11 @@ VOID HiiBrowserCleanup(HII_BROWSER_CONTEXT *Context)
                 FreePool(Form->Title);
         }
         FreePool(Context->Forms);
+    }
+    
+    if (Context->NvramManager)
+    {
+        NvramCleanup(Context->NvramManager);
+        FreePool(Context->NvramManager);
     }
 }
