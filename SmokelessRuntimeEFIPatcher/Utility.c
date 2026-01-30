@@ -199,6 +199,11 @@ LocateAndLoadFvFromName(CHAR16 *Name, EFI_SECTION_TYPE Section_Type, UINT8 **Buf
         UINTN FileSize;
         EFI_GUID NameGuid = {0};
         VOID *Keys = AllocateZeroPool(FvInstance->KeySize);
+        if (Keys == NULL)
+        {
+            continue;
+        }
+        
         while (TRUE)
         {
             FileType = EFI_FV_FILETYPE_ALL;
@@ -209,23 +214,27 @@ LocateAndLoadFvFromName(CHAR16 *Name, EFI_SECTION_TYPE Section_Type, UINT8 **Buf
                 // Print(L"Breaking Cause %r\n\r", Status);
                 break;
             }
-            VOID *String;
+            VOID *String = NULL;
             UINTN StringSize = 0;
             UINT32 AuthenticationStatus;
-            String = NULL;
             Status = FvInstance->ReadSection(FvInstance, &NameGuid, EFI_SECTION_USER_INTERFACE, 0, &String, &StringSize, &AuthenticationStatus);
-            if (StrCmp(Name, String) == 0)
+            if (!EFI_ERROR(Status) && String != NULL && StrCmp(Name, String) == 0)
             {
-
                 Print(L"Guid :%g, FileSize %d, Name : %s, Type %d \n\r", NameGuid, FileSize, String, FileType);
 
                 Status = FvInstance->ReadSection(FvInstance, &NameGuid, Section_Type, 0,(VOID **) Buffer, BufferSize, &AuthenticationStatus);
                 Print(L"Result Cause %r\n\r", Status);
                 FreePool(String);
+                FreePool(Keys);
                 return EFI_SUCCESS;
             }
-            FreePool(String);
+            if (String != NULL)
+            {
+                FreePool(String);
+            }
         }
+        
+        FreePool(Keys);
     }
     return EFI_NOT_FOUND;
 }

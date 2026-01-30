@@ -19,6 +19,7 @@ typedef struct {
 typedef struct {
     NVRAM_VARIABLE *Variables;
     UINTN VariableCount;
+    UINTN VariableCapacity;  // Maximum capacity before reallocation
     UINTN ModifiedCount;
 } NVRAM_MANAGER;
 

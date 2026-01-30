@@ -1,14 +1,48 @@
 # SmokelessRuntimeEFIPatcher (SREP)
 
-Enhanced UEFI/BIOS configuration tool with auto-detection and intelligent patching capabilities.
+Enhanced UEFI/BIOS configuration tool with auto-detection, intelligent patching, and **dynamic BIOS form extraction**.
 
 ## Features
 
 - **Auto-Detection**: Automatically detects BIOS type (AMI, HP AMI, Insyde, Phoenix)
-- **Interactive Menu**: User-friendly menu interface for BIOS configuration
+- **Dynamic Form Extraction**: Parses real BIOS forms from HII database with actual titles and options
+- **BIOS-Style Tabbed Interface**: Organizes forms into tabs (Main, Advanced, Power, Boot, Security, Save & Exit)
+- **Interactive Menu**: User-friendly menu interface with keyboard navigation
 - **Direct NVRAM Access**: Saves settings directly to BIOS NVRAM
 - **Hidden Menu Unlocking**: Patches IFR opcodes to reveal hidden BIOS options
 - **HP AMI Support**: Specialized support for HP customized AMI BIOS
+- **Real-Time IFR Parsing**: Extracts actual form structures, not placeholder data
+
+## New: Dynamic BIOS Form Extraction
+
+SREP now automatically extracts and displays **real BIOS configuration forms** from the HII database:
+
+### What Gets Extracted
+- **Real Form Titles**: Actual BIOS form names (e.g., "Main", "CPU Configuration", "Boot Options")
+- **Form Organization**: Automatically categorizes forms into appropriate tabs
+- **Hidden Forms**: Identifies and displays previously suppressed/hidden forms
+- **FormSet Structure**: Preserves BIOS organization and hierarchy
+
+### How It Works
+1. **HII Database Scanning**: Enumerates all HII package lists
+2. **IFR Parsing**: Parses Internal Form Representation data
+3. **String Extraction**: Retrieves localized strings for form titles
+4. **Dynamic Categorization**: Organizes forms into tabs based on keywords
+5. **Tab Creation**: Builds tabbed interface matching BIOS structure
+
+### Enable Dynamic Tab Mode
+Create `SREP_BiosTab.flag` file to activate BIOS-style interface with dynamic form extraction:
+```bash
+fs0:
+echo. > SREP_BiosTab.flag
+SmokelessRuntimeEFIPatcher.efi
+```
+
+The system will:
+1. Scan HII database
+2. Extract all BIOS forms with real titles
+3. Organize into tabs automatically
+4. Display with BIOS-like interface
 
 ## Building
 

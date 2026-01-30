@@ -18,13 +18,40 @@ EFI_STATUS NvramInitialize(NVRAM_MANAGER *Manager)
     
     ZeroMem(Manager, sizeof(NVRAM_MANAGER));
     
-    // Allocate initial variable array
-    Manager->Variables = AllocateZeroPool(sizeof(NVRAM_VARIABLE) * 100);
+    // Allocate initial variable array with reasonable capacity
+    Manager->VariableCapacity = 100;
+    Manager->Variables = AllocateZeroPool(sizeof(NVRAM_VARIABLE) * Manager->VariableCapacity);
     if (Manager->Variables == NULL)
         return EFI_OUT_OF_RESOURCES;
     
     Manager->VariableCount = 0;
     Manager->ModifiedCount = 0;
+    
+    return EFI_SUCCESS;
+}
+
+/**
+ * Expand variable array capacity if needed
+ */
+STATIC EFI_STATUS NvramExpandCapacity(NVRAM_MANAGER *Manager)
+{
+    if (Manager == NULL)
+        return EFI_INVALID_PARAMETER;
+    
+    // Double the capacity
+    UINTN NewCapacity = Manager->VariableCapacity * 2;
+    NVRAM_VARIABLE *NewVariables = AllocateZeroPool(sizeof(NVRAM_VARIABLE) * NewCapacity);
+    
+    if (NewVariables == NULL)
+        return EFI_OUT_OF_RESOURCES;
+    
+    // Copy existing variables
+    CopyMem(NewVariables, Manager->Variables, sizeof(NVRAM_VARIABLE) * Manager->VariableCount);
+    
+    // Free old array and use new one
+    FreePool(Manager->Variables);
+    Manager->Variables = NewVariables;
+    Manager->VariableCapacity = NewCapacity;
     
     return EFI_SUCCESS;
 }
@@ -128,23 +155,32 @@ EFI_STATUS NvramLoadSetupVariables(NVRAM_MANAGER *Manager)
             Status = NvramReadVariable(Manager, CommonVarNames[v], CommonGuids[g], &Data, &DataSize);
             if (!EFI_ERROR(Status))
             {
-                // Add to our list
-                if (Manager->VariableCount < 100)
+                // Check if we need to expand capacity
+                if (Manager->VariableCount >= Manager->VariableCapacity)
                 {
-                    NVRAM_VARIABLE *Var = &Manager->Variables[Manager->VariableCount];
-                    Var->Name = AllocateCopyPool(StrSize(CommonVarNames[v]), CommonVarNames[v]);
-                    CopyMem(&Var->Guid, CommonGuids[g], sizeof(EFI_GUID));
-                    Var->Data = Data;
-                    Var->DataSize = DataSize;
-                    Var->OriginalData = AllocateCopyPool(DataSize, Data);
-                    Var->Modified = FALSE;
-                    
-                    // Get attributes
-                    gRT->GetVariable(Var->Name, &Var->Guid, &Var->Attributes, &DataSize, NULL);
-                    
-                    Manager->VariableCount++;
-                    LoadedCount++;
+                    Status = NvramExpandCapacity(Manager);
+                    if (EFI_ERROR(Status))
+                    {
+                        FreePool(Data);
+                        Print(L"Warning: Failed to expand NVRAM capacity\n");
+                        continue;
+                    }
                 }
+                
+                // Add to our list
+                NVRAM_VARIABLE *Var = &Manager->Variables[Manager->VariableCount];
+                Var->Name = AllocateCopyPool(StrSize(CommonVarNames[v]), CommonVarNames[v]);
+                CopyMem(&Var->Guid, CommonGuids[g], sizeof(EFI_GUID));
+                Var->Data = Data;
+                Var->DataSize = DataSize;
+                Var->OriginalData = AllocateCopyPool(DataSize, Data);
+                Var->Modified = FALSE;
+                
+                // Get attributes
+                gRT->GetVariable(Var->Name, &Var->Guid, &Var->Attributes, &DataSize, NULL);
+                
+                Manager->VariableCount++;
+                LoadedCount++;
             }
         }
     }
@@ -165,6 +201,8 @@ EFI_STATUS NvramStageVariable(
     UINTN DataSize
 )
 {
+    EFI_STATUS Status;
+    
     if (Manager == NULL || Name == NULL || Guid == NULL || NewData == NULL)
         return EFI_INVALID_PARAMETER;
     
@@ -202,24 +240,29 @@ EFI_STATUS NvramStageVariable(
     }
     
     // Variable not found, add it
-    if (Manager->VariableCount < 100)
+    // Check if we need to expand capacity
+    if (Manager->VariableCount >= Manager->VariableCapacity)
     {
-        NVRAM_VARIABLE *Var = &Manager->Variables[Manager->VariableCount];
-        Var->Name = AllocateCopyPool(StrSize(Name), Name);
-        CopyMem(&Var->Guid, Guid, sizeof(EFI_GUID));
-        Var->Data = AllocateCopyPool(DataSize, NewData);
-        Var->DataSize = DataSize;
-        Var->OriginalData = NULL;
-        Var->Modified = TRUE;
-        Var->Attributes = EFI_VARIABLE_NON_VOLATILE | EFI_VARIABLE_BOOTSERVICE_ACCESS | EFI_VARIABLE_RUNTIME_ACCESS;
-        
-        Manager->VariableCount++;
-        Manager->ModifiedCount++;
-        
-        return EFI_SUCCESS;
+        Status = NvramExpandCapacity(Manager);
+        if (EFI_ERROR(Status))
+        {
+            return EFI_OUT_OF_RESOURCES;
+        }
     }
     
-    return EFI_OUT_OF_RESOURCES;
+    NVRAM_VARIABLE *Var = &Manager->Variables[Manager->VariableCount];
+    Var->Name = AllocateCopyPool(StrSize(Name), Name);
+    CopyMem(&Var->Guid, Guid, sizeof(EFI_GUID));
+    Var->Data = AllocateCopyPool(DataSize, NewData);
+    Var->DataSize = DataSize;
+    Var->OriginalData = NULL;
+    Var->Modified = TRUE;
+    Var->Attributes = EFI_VARIABLE_NON_VOLATILE | EFI_VARIABLE_BOOTSERVICE_ACCESS | EFI_VARIABLE_RUNTIME_ACCESS;
+    
+    Manager->VariableCount++;
+    Manager->ModifiedCount++;
+    
+    return EFI_SUCCESS;
 }
 
 /**
