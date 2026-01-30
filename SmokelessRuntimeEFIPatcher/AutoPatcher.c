@@ -89,6 +89,103 @@ EFI_STATUS PatchAllLoadedModules(EFI_HANDLE ImageHandle, BIOS_INFO *BiosInfo)
 }
 
 /**
+ * Load and patch a module and its dependencies from firmware volume
+ */
+EFI_STATUS LoadAndPatchModule(EFI_HANDLE ImageHandle, CHAR8 *ModuleName, BIOS_INFO *BiosInfo, BOOLEAN Execute)
+{
+    EFI_STATUS Status;
+    EFI_LOADED_IMAGE_PROTOCOL *ImageInfo = NULL;
+    EFI_HANDLE AppImageHandle = NULL;
+
+    AsciiSPrint(Log, 512, "Loading module: %a\n\r", ModuleName);
+    LogToFile(LogFile, Log);
+
+    // Try to load module from Firmware Volume
+    Status = LoadFV(ImageHandle, ModuleName, &ImageInfo, &AppImageHandle, EFI_SECTION_PE32);
+    
+    if (EFI_ERROR(Status))
+    {
+        AsciiSPrint(Log, 512, "Could not load %a from FV: %r\n\r", ModuleName, Status);
+        LogToFile(LogFile, Log);
+        return Status;
+    }
+
+    AsciiSPrint(Log, 512, "Module %a loaded at 0x%x (size: 0x%x)\n\r", 
+               ModuleName, ImageInfo->ImageBase, ImageInfo->ImageSize);
+    LogToFile(LogFile, Log);
+
+    // Apply patches
+    DisableWriteProtections(ImageInfo->ImageBase, ImageInfo->ImageSize);
+    
+    if (BiosInfo->Type == BIOS_TYPE_AMI || BiosInfo->Type == BIOS_TYPE_AMI_HP_CUSTOM)
+    {
+        (VOID)PatchAmiForms(ImageInfo->ImageBase, ImageInfo->ImageSize);
+    }
+    else if (BiosInfo->Type == BIOS_TYPE_INSYDE)
+    {
+        (VOID)PatchInsydeForms(ImageInfo->ImageBase, ImageInfo->ImageSize);
+    }
+
+    IFR_PATCH *PatchList = NULL;
+    Status = ParseIfrData(ImageInfo->ImageBase, ImageInfo->ImageSize, &PatchList);
+    if (!EFI_ERROR(Status) && PatchList != NULL)
+    {
+        ApplyIfrPatches(ImageInfo->ImageBase, ImageInfo->ImageSize, PatchList);
+        FreeIfrPatchList(PatchList);
+    }
+
+    // Execute if requested
+    if (Execute)
+    {
+        AsciiSPrint(Log, 512, "Executing %a...\n\r", ModuleName);
+        LogToFile(LogFile, Log);
+        
+        Status = Exec(&AppImageHandle);
+        
+        AsciiSPrint(Log, 512, "%a returned: %r\n\r", ModuleName, Status);
+        LogToFile(LogFile, Log);
+    }
+
+    return EFI_SUCCESS;
+}
+
+/**
+ * Load and patch Setup dependencies
+ */
+EFI_STATUS PatchSetupDependencies(EFI_HANDLE ImageHandle, BIOS_INFO *BiosInfo)
+{
+    AsciiSPrint(Log, 512, "\n--- Patching Setup Dependencies ---\n\r");
+    LogToFile(LogFile, Log);
+
+    // Common Setup dependencies based on AMI BIOS analysis
+    CHAR8 *Dependencies[] = {
+        "HiiDatabase",           // HII Database - critical for forms
+        "TcgPlatformSetupPolicy", // TCG/TPM Setup
+        "NvmeDynamicSetup",      // NVMe configuration
+        "PciDynamicSetup",       // PCI configuration
+        "NetworkStackSetupScreen", // Network setup
+        NULL
+    };
+
+    UINTN PatchedCount = 0;
+    for (UINTN i = 0; Dependencies[i] != NULL; i++)
+    {
+        // Try to load and patch each dependency
+        // Don't fail if a dependency is not found
+        EFI_STATUS Status = LoadAndPatchModule(ImageHandle, Dependencies[i], BiosInfo, FALSE);
+        if (!EFI_ERROR(Status))
+        {
+            PatchedCount++;
+        }
+    }
+
+    AsciiSPrint(Log, 512, "Patched %d Setup dependencies\n\r", PatchedCount);
+    LogToFile(LogFile, Log);
+
+    return EFI_SUCCESS;
+}
+
+/**
  * Main auto-patching function
  */
 EFI_STATUS AutoPatchBios(EFI_HANDLE ImageHandle, BIOS_INFO *BiosInfo)
@@ -109,13 +206,18 @@ EFI_STATUS AutoPatchBios(EFI_HANDLE ImageHandle, BIOS_INFO *BiosInfo)
     AsciiSPrint(Log, 512, "FormBrowser Module: %s\n\r", BiosInfo->FormBrowserName);
     LogToFile(LogFile, Log);
 
-    // First, patch all currently loaded modules
-    AsciiSPrint(Log, 512, "\n=== Phase 1: Patching Loaded Modules ===\n\r");
+    // Phase 1: Patch all currently loaded modules
+    AsciiSPrint(Log, 512, "\n=== Phase 1: Patching All Loaded Modules ===\n\r");
     LogToFile(LogFile, Log);
     PatchAllLoadedModules(ImageHandle, BiosInfo);
 
-    // Dispatch to appropriate patcher based on BIOS type
-    AsciiSPrint(Log, 512, "\n=== Phase 2: Vendor-Specific Patching ===\n\r");
+    // Phase 2: Patch Setup dependencies
+    AsciiSPrint(Log, 512, "\n=== Phase 2: Patching Setup Dependencies ===\n\r");
+    LogToFile(LogFile, Log);
+    PatchSetupDependencies(ImageHandle, BiosInfo);
+
+    // Phase 3: Vendor-specific patching
+    AsciiSPrint(Log, 512, "\n=== Phase 3: Vendor-Specific Patching ===\n\r");
     LogToFile(LogFile, Log);
     switch (BiosInfo->Type)
     {
