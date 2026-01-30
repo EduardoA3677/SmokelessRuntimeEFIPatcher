@@ -434,6 +434,24 @@ VOID MenuDraw(MENU_CONTEXT *Context)
 }
 
 /**
+ * Find first enabled item in a page
+ */
+static UINTN FindFirstEnabledItem(MENU_PAGE *Page)
+{
+    if (Page == NULL || Page->ItemCount == 0)
+        return 0;
+    
+    for (UINTN i = 0; i < Page->ItemCount; i++)
+    {
+        if (Page->Items[i].Enabled)
+            return i;
+    }
+    
+    // No enabled items found, return 0 as fallback
+    return 0;
+}
+
+/**
  * Find next selectable item
  */
 static UINTN FindNextSelectableItem(MENU_PAGE *Page, UINTN StartIndex, BOOLEAN Forward)
@@ -461,7 +479,8 @@ static UINTN FindNextSelectableItem(MENU_PAGE *Page, UINTN StartIndex, BOOLEAN F
         Count++;
     }
     
-    return StartIndex;
+    // No enabled items found, return first enabled item or 0
+    return FindFirstEnabledItem(Page);
 }
 
 /**
@@ -559,6 +578,12 @@ EFI_STATUS MenuRun(MENU_CONTEXT *Context, MENU_PAGE *StartPage)
         
         Context->CurrentPage = StartPage;
         Context->RootPage = StartPage;
+        
+        // Ensure we start with a valid enabled item
+        if (StartPage->ItemCount > 0)
+        {
+            StartPage->SelectedIndex = FindFirstEnabledItem(StartPage);
+        }
     }
     
     Context->Running = TRUE;
@@ -596,6 +621,13 @@ EFI_STATUS MenuNavigateTo(MENU_CONTEXT *Context, MENU_PAGE *Page)
         return EFI_INVALID_PARAMETER;
     
     Context->CurrentPage = Page;
+    
+    // Ensure we select a valid enabled item
+    if (Page->ItemCount > 0)
+    {
+        Page->SelectedIndex = FindFirstEnabledItem(Page);
+    }
+    
     MenuDraw(Context);
     
     return EFI_SUCCESS;
@@ -619,6 +651,13 @@ EFI_STATUS MenuGoBack(MENU_CONTEXT *Context)
     if (Context->CurrentPage->Parent)
     {
         Context->CurrentPage = Context->CurrentPage->Parent;
+        
+        // Ensure we select a valid enabled item
+        if (Context->CurrentPage->ItemCount > 0)
+        {
+            Context->CurrentPage->SelectedIndex = FindFirstEnabledItem(Context->CurrentPage);
+        }
+        
         MenuDraw(Context);
     }
     
