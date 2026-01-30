@@ -1,5 +1,8 @@
 // Additional IFR Opcode definitions for comprehensive BIOS support
 // Based on UEFI spec and real BIOS analysis
+//
+// NOTE: Structure definitions are provided by EDK2 headers (UefiInternalFormRepresentation.h)
+// This file only defines opcode constants that may not be defined in older EDK2 versions
 
 #ifndef _IFR_OPCODES_H_
 #define _IFR_OPCODES_H_
@@ -21,61 +24,9 @@
 #define EFI_IFR_STRING_OP             0x1C
 #define EFI_IFR_DEFAULT_OP            0x5B
 
-// SUBTITLE structure
-typedef struct {
-    EFI_IFR_OP_HEADER Header;
-    EFI_IFR_STATEMENT_HEADER Statement;
-    EFI_STRING_ID Prompt;
-    UINT8 Flags;
-} EFI_IFR_SUBTITLE;
-
-// TEXT structure
-typedef struct {
-    EFI_IFR_OP_HEADER Header;
-    EFI_IFR_STATEMENT_HEADER Statement;
-    EFI_STRING_ID Prompt;
-    EFI_STRING_ID Help;
-    EFI_STRING_ID TextTwo;
-} EFI_IFR_TEXT;
-
-// ONE_OF_OPTION structure
-typedef struct {
-    EFI_IFR_OP_HEADER Header;
-    EFI_STRING_ID Option;
-    UINT8 Flags;
-    UINT8 Type;
-    // Value follows based on Type
-} EFI_IFR_ONE_OF_OPTION;
-
-// REF structure
-typedef struct {
-    EFI_IFR_OP_HEADER Header;
-    EFI_IFR_QUESTION_HEADER Question;
-    EFI_FORM_ID FormId;
-} EFI_IFR_REF;
-
-// REF2 structure (with FormSetGuid)
-typedef struct {
-    EFI_IFR_OP_HEADER Header;
-    EFI_IFR_QUESTION_HEADER Question;
-    EFI_FORM_ID FormId;
-    EFI_QUESTION_ID QuestionId;
-    EFI_GUID FormSetId;
-} EFI_IFR_REF2;
-
-// DEFAULT structure
-typedef struct {
-    EFI_IFR_OP_HEADER Header;
-    UINT16 DefaultId;
-    UINT8 Type;
-    // Value follows based on Type
-} EFI_IFR_DEFAULT;
-
-// ACTION structure
-typedef struct {
-    EFI_IFR_OP_HEADER Header;
-    EFI_IFR_QUESTION_HEADER Question;
-    EFI_STRING_ID QuestionConfig;
-} EFI_IFR_ACTION;
+// Structure definitions are already provided by:
+// MdePkg/Include/Uefi/UefiInternalFormRepresentation.h
+// Including: EFI_IFR_SUBTITLE, EFI_IFR_TEXT, EFI_IFR_ONE_OF_OPTION,
+//            EFI_IFR_REF, EFI_IFR_REF2, EFI_IFR_DEFAULT, EFI_IFR_ACTION
 
 #endif // _IFR_OPCODES_H_

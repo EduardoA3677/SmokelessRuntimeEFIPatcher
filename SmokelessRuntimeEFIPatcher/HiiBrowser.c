@@ -1980,7 +1980,6 @@ EFI_STATUS HiiBrowserCreateDynamicTabs(
                     // Build description with vendor and category info
                     CHAR16 Description[MAX_DESCRIPTION_LENGTH];
                     CHAR16 *VendorStr = L"";
-                    CHAR16 *CategoryStr = L"";
                     
                     // Determine vendor string
                     switch (Context->Forms[i].Vendor)
