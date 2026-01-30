@@ -107,7 +107,6 @@ STATIC EFI_STATUS ParseIfrPackage(
     
     EFI_GUID CurrentFormSetGuid = {0};
     UINT16 CurrentFormId = 0;
-    CHAR16 *CurrentFormTitle = NULL;
     BOOLEAN InSuppressIf = FALSE;
     
     // Allocate initial form array
