@@ -201,6 +201,8 @@ EFI_STATUS NvramStageVariable(
     UINTN DataSize
 )
 {
+    EFI_STATUS Status;
+    
     if (Manager == NULL || Name == NULL || Guid == NULL || NewData == NULL)
         return EFI_INVALID_PARAMETER;
     
