@@ -20,7 +20,9 @@
 #include <Library/MemoryAllocationLib.h>
 #include "Utility.h"
 #include "Opcode.h"
-#define SREP_VERSION L"0.1.4c"
+#include "BiosDetector.h"
+#include "AutoPatcher.h"
+#define SREP_VERSION L"0.2.0"
 
 EFI_BOOT_SERVICES *_gBS = NULL;
 EFI_RUNTIME_SERVICES *_gRS = NULL;
@@ -157,7 +159,11 @@ EFI_STATUS EFIAPI SREPEntry(IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *Syst
     EFI_FILE *Root;
     EFI_FILE *ConfigFile;
     CHAR16 FileName[255];
-    Print(L"Welcome to SREP (Smokeless Runtime EFI Patcher) %s\n\r", SREP_VERSION);    
+    BOOLEAN UseAutoMode = TRUE;
+    
+    Print(L"Welcome to SREP (Smokeless Runtime EFI Patcher) %s\n\r", SREP_VERSION);
+    Print(L"Enhanced with Auto-Detection and Intelligent Patching\n\r");
+    
     gBS->SetWatchdogTimer(0, 0, 0, 0);
     HandleProtocol = SystemTable->BootServices->HandleProtocol;
     HandleProtocol(ImageHandle, &gEfiLoadedImageProtocolGuid, (void **)&LoadedImage);
@@ -172,14 +178,69 @@ EFI_STATUS EFIAPI SREPEntry(IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *Syst
     }
     AsciiSPrint(Log,512,"Welcome to SREP (Smokeless Runtime EFI Patcher) %s\n\r", SREP_VERSION);
     LogToFile(LogFile,Log);
+    AsciiSPrint(Log,512,"Enhanced with Auto-Detection and Intelligent Patching\n\r");
+    LogToFile(LogFile,Log);
+    
+    // Check if config file exists (for backward compatibility)
     UnicodeSPrint(FileName, sizeof(FileName), L"%a", "SREP_Config.cfg");
     Status = Root->Open(Root, &ConfigFile, FileName, EFI_FILE_MODE_READ, 0);
     if (Status != EFI_SUCCESS)
     {
-        AsciiSPrint(Log,512,"Failed on Opening SREP_Config : %r\n\r", Status);
+        AsciiSPrint(Log,512,"Config file not found, using AUTO mode\n\r");
         LogToFile(LogFile,Log);
+        UseAutoMode = TRUE;
+    }
+    else
+    {
+        AsciiSPrint(Log,512,"Config file found, using MANUAL mode\n\r");
+        LogToFile(LogFile,Log);
+        UseAutoMode = FALSE;
+    }
+    
+    // AUTO MODE: Detect and patch automatically
+    if (UseAutoMode)
+    {
+        BIOS_INFO BiosInfo;
+        ZeroMem(&BiosInfo, sizeof(BIOS_INFO));
+        
+        AsciiSPrint(Log,512,"\n=== AUTO MODE: Detecting BIOS Type ===\n\r");
+        LogToFile(LogFile,Log);
+        
+        // Detect BIOS type
+        Status = DetectBiosType(&BiosInfo);
+        if (EFI_ERROR(Status))
+        {
+            AsciiSPrint(Log,512,"BIOS detection failed: %r\n\r", Status);
+            LogToFile(LogFile,Log);
+            Print(L"BIOS detection failed: %r\n\r", Status);
+            Print(L"Press any key to exit...\n\r");
+            UINTN Index;
+            gBS->WaitForEvent(1, &gST->ConIn->WaitForKey, &Index);
+            return Status;
+        }
+        
+        Print(L"\nDetected BIOS: %s\n\r", GetBiosTypeString(BiosInfo.Type));
+        Print(L"Vendor: %s\n\r", BiosInfo.VendorName);
+        Print(L"Version: %s\n\r", BiosInfo.Version);
+        Print(L"\nStarting automatic patching...\n\r");
+        
+        // Auto-patch based on detected BIOS
+        Status = AutoPatchBios(ImageHandle, &BiosInfo);
+        
+        if (EFI_ERROR(Status))
+        {
+            AsciiSPrint(Log,512,"Auto-patching failed: %r\n\r", Status);
+            LogToFile(LogFile,Log);
+            Print(L"Auto-patching failed: %r\n\r", Status);
+        }
+        
+        LogFile->Close(LogFile);
         return Status;
     }
+    
+    // MANUAL MODE: Use config file (legacy behavior)
+    AsciiSPrint(Log,512,"\n=== MANUAL MODE: Using Config File ===\n\r");
+    LogToFile(LogFile,Log);
 
    AsciiSPrint(Log,512,"%a","Opened SREP_Config\n\r");
    LogToFile(LogFile,Log);
