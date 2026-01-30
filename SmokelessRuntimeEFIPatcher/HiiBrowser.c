@@ -551,17 +551,18 @@ STATIC EFI_STATUS ParseFormQuestions(
                     Question->IsGrayedOut = InGrayoutIf;
                     
                     // Get prompt text
-                    if (!EFI_ERROR(Status) && HiiString != NULL && Text->Prompt != 0)
+                    // Note: EFI_IFR_TEXT structure has Statement.Prompt field
+                    if (!EFI_ERROR(Status) && HiiString != NULL && Text->Statement.Prompt != 0)
                     {
                         UINTN StringSize = 0;
-                        HiiString->GetString(HiiString, "en-US", HiiHandle, Text->Prompt, NULL, &StringSize, NULL);
+                        HiiString->GetString(HiiString, "en-US", HiiHandle, Text->Statement.Prompt, NULL, &StringSize, NULL);
                         
                         if (StringSize > 0)
                         {
                             Question->Prompt = AllocateZeroPool(StringSize);
                             if (Question->Prompt != NULL)
                             {
-                                HiiString->GetString(HiiString, "en-US", HiiHandle, Text->Prompt,
+                                HiiString->GetString(HiiString, "en-US", HiiHandle, Text->Statement.Prompt,
                                                     Question->Prompt, &StringSize, NULL);
                             }
                         }
@@ -618,17 +619,18 @@ STATIC EFI_STATUS ParseFormQuestions(
                     Question->IsHidden = FALSE;  // Always show
                     
                     // Get subtitle text
-                    if (!EFI_ERROR(Status) && HiiString != NULL && Subtitle->Prompt != 0)
+                    // Note: EFI_IFR_SUBTITLE structure has Statement.Prompt field
+                    if (!EFI_ERROR(Status) && HiiString != NULL && Subtitle->Statement.Prompt != 0)
                     {
                         UINTN StringSize = 0;
-                        HiiString->GetString(HiiString, "en-US", HiiHandle, Subtitle->Prompt, NULL, &StringSize, NULL);
+                        HiiString->GetString(HiiString, "en-US", HiiHandle, Subtitle->Statement.Prompt, NULL, &StringSize, NULL);
                         
                         if (StringSize > 0)
                         {
                             Question->Prompt = AllocateZeroPool(StringSize);
                             if (Question->Prompt != NULL)
                             {
-                                HiiString->GetString(HiiString, "en-US", HiiHandle, Subtitle->Prompt,
+                                HiiString->GetString(HiiString, "en-US", HiiHandle, Subtitle->Statement.Prompt,
                                                     Question->Prompt, &StringSize, NULL);
                             }
                         }
