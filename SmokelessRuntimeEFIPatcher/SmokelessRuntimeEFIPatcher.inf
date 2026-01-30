@@ -12,6 +12,13 @@
 	SmokelessRuntimeEFIPatcher.c
   Utility.c
   OpCode.c
+  BiosDetector.c
+  IfrParser.c
+  AutoPatcher.c
+  MenuUI.c
+  HiiBrowser.c
+  NvramManager.c
+  ConfigManager.c
 [Packages]
 	MdePkg/MdePkg.dec
   MdeModulePkg/MdeModulePkg.dec
@@ -41,6 +48,12 @@
   gEdkiiFormBrowserExProtocolGuid
   gEfiHiiPopupProtocolGuid
   gEdkiiFormDisplayEngineProtocolGuid
+  gEfiSmbiosProtocolGuid                        ## CONSUMES
+  gEfiHiiDatabaseProtocolGuid                   ## CONSUMES
+  gEfiHiiConfigRoutingProtocolGuid              ## CONSUMES
+  gEfiFormBrowser2ProtocolGuid                  ## CONSUMES
+  gEfiSimpleTextInProtocolGuid                  ## CONSUMES
+  gEfiSimpleTextOutProtocolGuid                 ## CONSUMES
 [Guids]
   gEfiAcpiTableGuid
   gEfiAcpi20TableGuid

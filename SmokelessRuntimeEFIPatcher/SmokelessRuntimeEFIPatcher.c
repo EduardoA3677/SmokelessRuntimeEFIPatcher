@@ -20,7 +20,12 @@
 #include <Library/MemoryAllocationLib.h>
 #include "Utility.h"
 #include "Opcode.h"
-#define SREP_VERSION L"0.1.4c"
+#include "BiosDetector.h"
+#include "AutoPatcher.h"
+#include "MenuUI.h"
+#include "HiiBrowser.h"
+#include "ConfigManager.h"
+#define SREP_VERSION L"0.3.1"
 
 EFI_BOOT_SERVICES *_gBS = NULL;
 EFI_RUNTIME_SERVICES *_gRS = NULL;
@@ -147,6 +152,518 @@ VOID PrintDump(UINT16 Size, UINT8 *DUMP)
 }
 
 
+// ========== MENU CALLBACK FUNCTIONS ==========
+
+// Global context for menu callbacks
+typedef struct {
+    EFI_HANDLE ImageHandle;
+    BIOS_INFO BiosInfo;
+} SREP_CONTEXT;
+
+/**
+ * Callback: Auto-detect and patch BIOS
+ */
+EFI_STATUS MenuCallback_AutoPatch(MENU_ITEM *Item, VOID *Context)
+{
+    MENU_CONTEXT *MenuCtx = (MENU_CONTEXT *)Context;
+    SREP_CONTEXT *SrepCtx = (SREP_CONTEXT *)Item->Data;
+    EFI_STATUS Status;
+    
+    MenuShowMessage(MenuCtx, L"Auto-Patch", L"Detecting BIOS and applying patches...");
+    
+    // Detect BIOS type
+    Status = DetectBiosType(&SrepCtx->BiosInfo);
+    if (EFI_ERROR(Status))
+    {
+        MenuShowMessage(MenuCtx, L"Error", L"BIOS detection failed!");
+        return Status;
+    }
+    
+    // Auto-patch
+    Status = AutoPatchBios(SrepCtx->ImageHandle, &SrepCtx->BiosInfo);
+    if (EFI_ERROR(Status))
+    {
+        MenuShowMessage(MenuCtx, L"Error", L"Auto-patching failed!");
+        return Status;
+    }
+    
+    MenuShowMessage(MenuCtx, L"Success", L"Patching complete! Setup browser will launch.");
+    
+    // This will not return (enters infinite loop after Setup)
+    return EFI_SUCCESS;
+}
+
+/**
+ * Callback: Browse BIOS settings (read-only)
+ */
+EFI_STATUS MenuCallback_BrowseSettings(MENU_ITEM *Item, VOID *Context)
+{
+    MENU_CONTEXT *MenuCtx = (MENU_CONTEXT *)Context;
+    HII_BROWSER_CONTEXT HiiCtx;
+    EFI_STATUS Status;
+    
+    MenuShowMessage(MenuCtx, L"Loading", L"Loading BIOS modules and NVRAM data...");
+    
+    // Initialize HII browser (includes NVRAM loading)
+    Status = HiiBrowserInitialize(&HiiCtx);
+    if (EFI_ERROR(Status))
+    {
+        MenuShowMessage(MenuCtx, L"Error", L"Failed to initialize HII browser!");
+        return Status;
+    }
+    
+    HiiCtx.MenuContext = MenuCtx;
+    
+    // Enumerate forms
+    Status = HiiBrowserEnumerateForms(&HiiCtx);
+    if (EFI_ERROR(Status))
+    {
+        MenuShowMessage(MenuCtx, L"Error", L"Failed to enumerate BIOS forms!");
+        HiiBrowserCleanup(&HiiCtx);
+        return Status;
+    }
+    
+    // Create and show forms menu
+    MENU_PAGE *FormsMenu = HiiBrowserCreateFormsMenu(&HiiCtx);
+    if (FormsMenu == NULL)
+    {
+        MenuShowMessage(MenuCtx, L"Error", L"Failed to create forms menu!");
+        HiiBrowserCleanup(&HiiCtx);
+        return EFI_OUT_OF_RESOURCES;
+    }
+    
+    MenuNavigateTo(MenuCtx, FormsMenu);
+    
+    // Cleanup
+    MenuFreePage(FormsMenu);
+    HiiBrowserCleanup(&HiiCtx);
+    
+    return EFI_SUCCESS;
+}
+
+/**
+ * Callback: Load BIOS modules and edit settings
+ */
+EFI_STATUS MenuCallback_LoadAndEdit(MENU_ITEM *Item, VOID *Context)
+{
+    MENU_CONTEXT *MenuCtx = (MENU_CONTEXT *)Context;
+    SREP_CONTEXT *SrepCtx = (SREP_CONTEXT *)Item->Data;
+    HII_BROWSER_CONTEXT HiiCtx;
+    EFI_STATUS Status;
+    
+    MenuShowMessage(MenuCtx, L"Loading", L"Detecting BIOS and loading modules...");
+    
+    // Detect BIOS type
+    Status = DetectBiosType(&SrepCtx->BiosInfo);
+    if (EFI_ERROR(Status))
+    {
+        MenuShowMessage(MenuCtx, L"Error", L"BIOS detection failed!");
+        return Status;
+    }
+    
+    // Load Setup modules (without launching yet)
+    Print(L"\nLoading BIOS modules...\n\r");
+    Print(L"BIOS Type: %s\n\r", GetBiosTypeString(SrepCtx->BiosInfo.Type));
+    Print(L"Vendor: %s\n\r", SrepCtx->BiosInfo.VendorName);
+    
+    // Initialize HII browser with NVRAM
+    Status = HiiBrowserInitialize(&HiiCtx);
+    if (EFI_ERROR(Status))
+    {
+        MenuShowMessage(MenuCtx, L"Error", L"Failed to initialize HII browser!");
+        return Status;
+    }
+    
+    HiiCtx.MenuContext = MenuCtx;
+    
+    // Enumerate forms
+    Status = HiiBrowserEnumerateForms(&HiiCtx);
+    if (EFI_ERROR(Status))
+    {
+        MenuShowMessage(MenuCtx, L"Error", L"Failed to enumerate BIOS forms!");
+        HiiBrowserCleanup(&HiiCtx);
+        return Status;
+    }
+    
+    // Show success
+    CHAR16 SuccessMsg[256];
+    UnicodeSPrint(SuccessMsg, sizeof(SuccessMsg),
+                  L"Loaded %d BIOS forms\n%d NVRAM variables loaded",
+                  HiiCtx.FormCount,
+                  HiiCtx.NvramManager ? HiiCtx.NvramManager->VariableCount : 0);
+    
+    MenuShowMessage(MenuCtx, L"Success", SuccessMsg);
+    
+    // Create forms menu with edit capability
+    MENU_PAGE *FormsMenu = HiiBrowserCreateFormsMenu(&HiiCtx);
+    if (FormsMenu == NULL)
+    {
+        MenuShowMessage(MenuCtx, L"Error", L"Failed to create forms menu!");
+        HiiBrowserCleanup(&HiiCtx);
+        return EFI_OUT_OF_RESOURCES;
+    }
+    
+    // Add save option at the end
+    MENU_PAGE *EditMenu = MenuCreatePage(L"BIOS Settings Editor", FormsMenu->ItemCount + 2);
+    if (EditMenu)
+    {
+        // Copy form items
+        for (UINTN i = 0; i < FormsMenu->ItemCount; i++)
+        {
+            EditMenu->Items[i] = FormsMenu->Items[i];
+        }
+        
+        // Add separator and save option
+        MenuAddSeparator(EditMenu, FormsMenu->ItemCount, NULL);
+        MenuAddActionItem(
+            EditMenu,
+            FormsMenu->ItemCount + 1,
+            L"Save Changes to NVRAM",
+            L"Write modified values to BIOS NVRAM",
+            NULL,  // We'll handle this inline
+            &HiiCtx
+        );
+        
+        MenuNavigateTo(MenuCtx, EditMenu);
+        
+        MenuFreePage(EditMenu);
+    }
+    
+    MenuFreePage(FormsMenu);
+    
+    // Save changes if any modifications were made
+    if (HiiCtx.NvramManager && NvramGetModifiedCount(HiiCtx.NvramManager) > 0)
+    {
+        HiiBrowserSaveChanges(&HiiCtx);
+    }
+    
+    HiiBrowserCleanup(&HiiCtx);
+    
+    return EFI_SUCCESS;
+}
+
+/**
+ * Callback: Launch Setup Browser directly
+ */
+EFI_STATUS MenuCallback_LaunchSetup(MENU_ITEM *Item, VOID *Context)
+{
+    MENU_CONTEXT *MenuCtx = (MENU_CONTEXT *)Context;
+    EFI_FORM_BROWSER2_PROTOCOL *FormBrowser2;
+    EFI_STATUS Status;
+    
+    // Try to locate FormBrowser2 protocol
+    Status = gBS->LocateProtocol(&gEfiFormBrowser2ProtocolGuid, NULL, (VOID **)&FormBrowser2);
+    if (EFI_ERROR(Status))
+    {
+        MenuShowMessage(MenuCtx, L"Error", L"FormBrowser2 Protocol not available!");
+        return Status;
+    }
+    
+    MenuShowMessage(MenuCtx, L"Launching", L"Starting BIOS Setup Browser...");
+    
+    // Clear screen and launch Setup
+    gST->ConOut->ClearScreen(gST->ConOut);
+    
+    Status = FormBrowser2->SendForm(FormBrowser2, NULL, 0, NULL, 0, NULL, NULL);
+    
+    // Redraw menu after Setup returns
+    MenuDraw(MenuCtx);
+    
+    return EFI_SUCCESS;
+}
+
+/**
+ * Helper: Wait for key press
+ */
+VOID WaitForKey(VOID)
+{
+    EFI_INPUT_KEY Key;
+    gBS->WaitForEvent(1, &gST->ConIn->WaitForKey, NULL);
+    gST->ConIn->ReadKeyStroke(gST->ConIn, &Key);
+}
+
+/**
+ * Callback: About dialog
+ */
+EFI_STATUS MenuCallback_About(MENU_ITEM *Item, VOID *Context)
+{
+    MENU_CONTEXT *MenuCtx = (MENU_CONTEXT *)Context;
+    
+    MenuShowMessage(MenuCtx, 
+        L"About SREP",
+        L"SmokelessRuntimeEFIPatcher v0.3.1\n"
+        L"Enhanced with:\n"
+        L"- Auto-Detection & Intelligent Patching\n"
+        L"- Interactive Menu Interface\n"
+        L"- NVRAM Configuration Save/Load\n"
+        L"- Settings Export/Import"
+    );
+    
+    return EFI_SUCCESS;
+}
+
+/**
+ * Callback: Save configuration to file
+ */
+EFI_STATUS MenuCallback_SaveConfig(MENU_ITEM *Item, VOID *Context)
+{
+    SREP_CONTEXT *SrepCtx = (SREP_CONTEXT *)Context;
+    MENU_CONTEXT *MenuCtx = SrepCtx->MenuContext;
+    CONFIG_MANAGER ConfigMgr;
+    EFI_STATUS Status;
+    BOOLEAN Confirm = FALSE;
+    
+    Print(L"\n=== Save Configuration ===\n\n");
+    
+    // Check if NVRAM manager is initialized
+    if (SrepCtx->NvramManager == NULL) {
+        MenuShowMessage(MenuCtx, L"Error", L"NVRAM manager not initialized. Please load modules first.");
+        return EFI_NOT_READY;
+    }
+    
+    MenuShowConfirm(MenuCtx, L"Save Configuration", 
+                    L"Save current NVRAM settings to SREP_Settings.cfg?", &Confirm);
+    
+    if (!Confirm) {
+        return EFI_SUCCESS;
+    }
+    
+    // Initialize config manager
+    Status = ConfigInitialize(&ConfigMgr);
+    if (EFI_ERROR(Status)) {
+        MenuShowMessage(MenuCtx, L"Error", L"Failed to initialize config manager");
+        return Status;
+    }
+    
+    // Load from NVRAM
+    Status = ConfigLoadFromNvram(&ConfigMgr, SrepCtx->NvramManager);
+    if (EFI_ERROR(Status)) {
+        Print(L"Warning: Could not load from NVRAM: %r\n", Status);
+    }
+    
+    // Save to file
+    Status = ConfigSaveToFile(&ConfigMgr, L"fs0:\\SREP_Settings.cfg");
+    if (EFI_ERROR(Status)) {
+        MenuShowMessage(MenuCtx, L"Error", L"Failed to save configuration file");
+        ConfigCleanup(&ConfigMgr);
+        return Status;
+    }
+    
+    Print(L"\nConfiguration saved successfully!\n");
+    Print(L"File: fs0:\\SREP_Settings.cfg\n");
+    Print(L"Entries: %u\n", ConfigGetEntryCount(&ConfigMgr));
+    
+    MenuShowMessage(MenuCtx, L"Success", L"Configuration saved to SREP_Settings.cfg");
+    
+    ConfigCleanup(&ConfigMgr);
+    return EFI_SUCCESS;
+}
+
+/**
+ * Callback: Load configuration from file
+ */
+EFI_STATUS MenuCallback_LoadConfig(MENU_ITEM *Item, VOID *Context)
+{
+    SREP_CONTEXT *SrepCtx = (SREP_CONTEXT *)Context;
+    MENU_CONTEXT *MenuCtx = SrepCtx->MenuContext;
+    CONFIG_MANAGER ConfigMgr;
+    EFI_STATUS Status;
+    BOOLEAN Confirm = FALSE;
+    
+    Print(L"\n=== Load Configuration ===\n\n");
+    
+    // Check if NVRAM manager is initialized
+    if (SrepCtx->NvramManager == NULL) {
+        MenuShowMessage(MenuCtx, L"Error", L"NVRAM manager not initialized. Please load modules first.");
+        return EFI_NOT_READY;
+    }
+    
+    MenuShowConfirm(MenuCtx, L"Load Configuration",
+                    L"Load settings from SREP_Settings.cfg and apply to NVRAM?", &Confirm);
+    
+    if (!Confirm) {
+        return EFI_SUCCESS;
+    }
+    
+    // Initialize config manager
+    Status = ConfigInitialize(&ConfigMgr);
+    if (EFI_ERROR(Status)) {
+        MenuShowMessage(MenuCtx, L"Error", L"Failed to initialize config manager");
+        return Status;
+    }
+    
+    // Load from file
+    Status = ConfigLoadFromFile(&ConfigMgr, L"fs0:\\SREP_Settings.cfg");
+    if (EFI_ERROR(Status)) {
+        MenuShowMessage(MenuCtx, L"Error", L"Failed to load configuration file");
+        ConfigCleanup(&ConfigMgr);
+        return Status;
+    }
+    
+    Print(L"Configuration loaded from file\n");
+    Print(L"Entries: %u\n", ConfigGetEntryCount(&ConfigMgr));
+    
+    // Apply to NVRAM
+    Status = ConfigApplyToNvram(&ConfigMgr, SrepCtx->NvramManager);
+    if (EFI_ERROR(Status)) {
+        MenuShowMessage(MenuCtx, L"Error", L"Failed to apply configuration to NVRAM");
+        ConfigCleanup(&ConfigMgr);
+        return Status;
+    }
+    
+    MenuShowMessage(MenuCtx, L"Success", L"Configuration loaded and applied to NVRAM");
+    
+    ConfigCleanup(&ConfigMgr);
+    return EFI_SUCCESS;
+}
+
+/**
+ * Callback: Export configuration to text
+ */
+EFI_STATUS MenuCallback_ExportConfig(MENU_ITEM *Item, VOID *Context)
+{
+    SREP_CONTEXT *SrepCtx = (SREP_CONTEXT *)Context;
+    MENU_CONTEXT *MenuCtx = SrepCtx->MenuContext;
+    CONFIG_MANAGER ConfigMgr;
+    EFI_STATUS Status;
+    
+    Print(L"\n=== Export Configuration ===\n\n");
+    
+    // Check if NVRAM manager is initialized
+    if (SrepCtx->NvramManager == NULL) {
+        MenuShowMessage(MenuCtx, L"Error", L"NVRAM manager not initialized. Please load modules first.");
+        return EFI_NOT_READY;
+    }
+    
+    // Initialize config manager
+    Status = ConfigInitialize(&ConfigMgr);
+    if (EFI_ERROR(Status)) {
+        MenuShowMessage(MenuCtx, L"Error", L"Failed to initialize config manager");
+        return Status;
+    }
+    
+    // Load from NVRAM
+    Status = ConfigLoadFromNvram(&ConfigMgr, SrepCtx->NvramManager);
+    if (EFI_ERROR(Status)) {
+        Print(L"Warning: Could not load from NVRAM: %r\n", Status);
+    }
+    
+    // Export to text
+    Status = ConfigExportToText(&ConfigMgr, L"fs0:\\SREP_Export.txt");
+    
+    Print(L"\nPress any key to continue...\n");
+    WaitForKey();
+    
+    ConfigCleanup(&ConfigMgr);
+    return EFI_SUCCESS;
+}
+
+/**
+ * Callback: Exit application
+ */
+EFI_STATUS MenuCallback_Exit(MENU_ITEM *Item, VOID *Context)
+{
+    MENU_CONTEXT *MenuCtx = (MENU_CONTEXT *)Context;
+    BOOLEAN Confirm = FALSE;
+    
+    MenuShowConfirm(MenuCtx, L"Exit", L"Are you sure you want to exit?", &Confirm);
+    
+    if (Confirm)
+    {
+        MenuCtx->Running = FALSE;
+    }
+    
+    return EFI_SUCCESS;
+}
+
+/**
+ * Create the main menu
+ */
+MENU_PAGE *CreateMainMenu(SREP_CONTEXT *SrepCtx)
+{
+    MENU_PAGE *MainMenu = MenuCreatePage(L"SmokelessRuntimeEFIPatcher - Main Menu", 15);
+    if (MainMenu == NULL)
+        return NULL;
+    
+    MenuAddInfoItem(MainMenu, 0, L"SREP v0.3.1 - Interactive BIOS Patcher with Config Save");
+    MenuAddSeparator(MainMenu, 1, NULL);
+    
+    MenuAddActionItem(
+        MainMenu, 2,
+        L"Auto-Detect and Patch BIOS",
+        L"Automatically detect BIOS type and apply patches",
+        MenuCallback_AutoPatch,
+        SrepCtx
+    );
+    
+    MenuAddActionItem(
+        MainMenu, 3,
+        L"Load Modules and Edit Settings",
+        L"Load BIOS modules and edit NVRAM settings",
+        MenuCallback_LoadAndEdit,
+        SrepCtx
+    );
+    
+    MenuAddActionItem(
+        MainMenu, 4,
+        L"Browse BIOS Settings (Read-Only)",
+        L"View BIOS settings without editing",
+        MenuCallback_BrowseSettings,
+        NULL
+    );
+    
+    MenuAddActionItem(
+        MainMenu, 5,
+        L"Launch Setup Browser",
+        L"Launch BIOS Setup Browser directly",
+        MenuCallback_LaunchSetup,
+        NULL
+    );
+    
+    MenuAddSeparator(MainMenu, 6, NULL);
+    
+    MenuAddActionItem(
+        MainMenu, 7,
+        L"Save Configuration to File",
+        L"Save current NVRAM settings to SREP_Settings.cfg",
+        MenuCallback_SaveConfig,
+        SrepCtx
+    );
+    
+    MenuAddActionItem(
+        MainMenu, 8,
+        L"Load Configuration from File",
+        L"Load and apply settings from SREP_Settings.cfg",
+        MenuCallback_LoadConfig,
+        SrepCtx
+    );
+    
+    MenuAddActionItem(
+        MainMenu, 9,
+        L"Export Configuration (Text)",
+        L"Export settings in human-readable format",
+        MenuCallback_ExportConfig,
+        SrepCtx
+    );
+    
+    MenuAddSeparator(MainMenu, 10, NULL);
+    
+    MenuAddInfoItem(MainMenu, 11, L"Config files: fs0:\\SREP_Settings.cfg, fs0:\\SREP_Export.txt");
+    MenuAddInfoItem(MainMenu, 12, L"Changes saved to NVRAM persist across reboots");
+    
+    MenuAddSeparator(MainMenu, 13, NULL);
+    
+    MenuAddActionItem(
+        MainMenu, 14,
+        L"Exit",
+        L"Exit to UEFI Shell or Boot Menu",
+        MenuCallback_Exit,
+        NULL
+    );
+    
+    return MainMenu;
+}
+
 
 EFI_STATUS EFIAPI SREPEntry(IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *SystemTable)
 {
@@ -157,7 +674,11 @@ EFI_STATUS EFIAPI SREPEntry(IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *Syst
     EFI_FILE *Root;
     EFI_FILE *ConfigFile;
     CHAR16 FileName[255];
-    Print(L"Welcome to SREP (Smokeless Runtime EFI Patcher) %s\n\r", SREP_VERSION);    
+    BOOLEAN UseAutoMode = TRUE;
+    
+    Print(L"Welcome to SREP (Smokeless Runtime EFI Patcher) %s\n\r", SREP_VERSION);
+    Print(L"Enhanced with Auto-Detection and Intelligent Patching\n\r");
+    
     gBS->SetWatchdogTimer(0, 0, 0, 0);
     HandleProtocol = SystemTable->BootServices->HandleProtocol;
     HandleProtocol(ImageHandle, &gEfiLoadedImageProtocolGuid, (void **)&LoadedImage);
@@ -172,14 +693,139 @@ EFI_STATUS EFIAPI SREPEntry(IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *Syst
     }
     AsciiSPrint(Log,512,"Welcome to SREP (Smokeless Runtime EFI Patcher) %s\n\r", SREP_VERSION);
     LogToFile(LogFile,Log);
+    AsciiSPrint(Log,512,"Enhanced with Auto-Detection and Intelligent Patching\n\r");
+    LogToFile(LogFile,Log);
+    
+    // Check for interactive mode flag file
+    BOOLEAN UseInteractiveMode = FALSE;
+    EFI_FILE *InteractiveFlag;
+    Status = Root->Open(Root, &InteractiveFlag, L"SREP_Interactive.flag", EFI_FILE_MODE_READ, 0);
+    if (!EFI_ERROR(Status))
+    {
+        InteractiveFlag->Close(InteractiveFlag);
+        UseInteractiveMode = TRUE;
+        AsciiSPrint(Log,512,"Interactive mode flag found\n\r");
+        LogToFile(LogFile,Log);
+    }
+    
+    // If no flag file, default to interactive mode (new behavior in v0.3.0)
+    // Users can create SREP_Auto.flag to skip interactive mode
+    EFI_FILE *AutoFlag;
+    Status = Root->Open(Root, &AutoFlag, L"SREP_Auto.flag", EFI_FILE_MODE_READ, 0);
+    if (!EFI_ERROR(Status))
+    {
+        AutoFlag->Close(AutoFlag);
+        UseInteractiveMode = FALSE;
+        AsciiSPrint(Log,512,"Auto mode flag found, skipping interactive menu\n\r");
+        LogToFile(LogFile,Log);
+    }
+    else
+    {
+        // Default to interactive mode
+        UseInteractiveMode = TRUE;
+    }
+    
+    // INTERACTIVE MODE: Show menu interface
+    if (UseInteractiveMode)
+    {
+        AsciiSPrint(Log,512,"\n=== INTERACTIVE MODE: Starting Menu ===\n\r");
+        LogToFile(LogFile,Log);
+        
+        // Initialize menu system
+        MENU_CONTEXT MenuCtx;
+        Status = MenuInitialize(&MenuCtx);
+        if (EFI_ERROR(Status))
+        {
+            Print(L"Failed to initialize menu system: %r\n\r", Status);
+            LogFile->Close(LogFile);
+            return Status;
+        }
+        
+        // Create SREP context for callbacks
+        SREP_CONTEXT SrepCtx;
+        SrepCtx.ImageHandle = ImageHandle;
+        ZeroMem(&SrepCtx.BiosInfo, sizeof(BIOS_INFO));
+        
+        // Create main menu
+        MENU_PAGE *MainMenu = CreateMainMenu(&SrepCtx);
+        if (MainMenu == NULL)
+        {
+            Print(L"Failed to create main menu\n\r");
+            LogFile->Close(LogFile);
+            return EFI_OUT_OF_RESOURCES;
+        }
+        
+        // Run menu loop
+        Status = MenuRun(&MenuCtx, MainMenu);
+        
+        // Cleanup
+        MenuFreePage(MainMenu);
+        MenuCleanup(&MenuCtx);
+        
+        LogFile->Close(LogFile);
+        return Status;
+    }
+    
+    // Check if config file exists (for backward compatibility)
     UnicodeSPrint(FileName, sizeof(FileName), L"%a", "SREP_Config.cfg");
     Status = Root->Open(Root, &ConfigFile, FileName, EFI_FILE_MODE_READ, 0);
     if (Status != EFI_SUCCESS)
     {
-        AsciiSPrint(Log,512,"Failed on Opening SREP_Config : %r\n\r", Status);
+        AsciiSPrint(Log,512,"Config file not found, using AUTO mode\n\r");
         LogToFile(LogFile,Log);
+        UseAutoMode = TRUE;
+    }
+    else
+    {
+        AsciiSPrint(Log,512,"Config file found, using MANUAL mode\n\r");
+        LogToFile(LogFile,Log);
+        UseAutoMode = FALSE;
+    }
+    
+    // AUTO MODE: Detect and patch automatically
+    if (UseAutoMode)
+    {
+        BIOS_INFO BiosInfo;
+        ZeroMem(&BiosInfo, sizeof(BIOS_INFO));
+        
+        AsciiSPrint(Log,512,"\n=== AUTO MODE: Detecting BIOS Type ===\n\r");
+        LogToFile(LogFile,Log);
+        
+        // Detect BIOS type
+        Status = DetectBiosType(&BiosInfo);
+        if (EFI_ERROR(Status))
+        {
+            AsciiSPrint(Log,512,"BIOS detection failed: %r\n\r", Status);
+            LogToFile(LogFile,Log);
+            Print(L"BIOS detection failed: %r\n\r", Status);
+            Print(L"Press any key to exit...\n\r");
+            UINTN Index;
+            gBS->WaitForEvent(1, &gST->ConIn->WaitForKey, &Index);
+            return Status;
+        }
+        
+        Print(L"\nDetected BIOS: %s\n\r", GetBiosTypeString(BiosInfo.Type));
+        Print(L"Vendor: %s\n\r", BiosInfo.VendorName);
+        Print(L"Version: %s\n\r", BiosInfo.Version);
+        Print(L"\nStarting automatic patching...\n\r");
+        
+        // Auto-patch based on detected BIOS
+        Status = AutoPatchBios(ImageHandle, &BiosInfo);
+        
+        if (EFI_ERROR(Status))
+        {
+            AsciiSPrint(Log,512,"Auto-patching failed: %r\n\r", Status);
+            LogToFile(LogFile,Log);
+            Print(L"Auto-patching failed: %r\n\r", Status);
+        }
+        
+        LogFile->Close(LogFile);
         return Status;
     }
+    
+    // MANUAL MODE: Use config file (legacy behavior)
+    AsciiSPrint(Log,512,"\n=== MANUAL MODE: Using Config File ===\n\r");
+    LogToFile(LogFile,Log);
 
    AsciiSPrint(Log,512,"%a","Opened SREP_Config\n\r");
    LogToFile(LogFile,Log);
