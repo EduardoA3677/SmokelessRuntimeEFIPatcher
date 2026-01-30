@@ -100,7 +100,7 @@ EFI_STATUS PatchAmiBios(EFI_HANDLE ImageHandle, BIOS_INFO *BiosInfo)
         LogToFile(LogFile, Log);
 
         // Apply AMI-specific form patches
-        UINTN PatchCount = PatchAmiForms(ImageInfo->ImageBase, ImageInfo->ImageSize);
+        (VOID)PatchAmiForms(ImageInfo->ImageBase, ImageInfo->ImageSize);
 
         // Parse IFR data and apply patches
         IFR_PATCH *PatchList = NULL;
@@ -128,7 +128,7 @@ EFI_STATUS PatchAmiBios(EFI_HANDLE ImageHandle, BIOS_INFO *BiosInfo)
         LogToFile(LogFile, Log);
 
         DisableWriteProtections(ImageInfo->ImageBase, ImageInfo->ImageSize);
-        PatchAmiForms(ImageInfo->ImageBase, ImageInfo->ImageSize);
+        (VOID)PatchAmiForms(ImageInfo->ImageBase, ImageInfo->ImageSize);
 
         IFR_PATCH *PatchList = NULL;
         Status = ParseIfrData(ImageInfo->ImageBase, ImageInfo->ImageSize, &PatchList);
@@ -171,7 +171,7 @@ EFI_STATUS PatchInsydeBios(EFI_HANDLE ImageHandle, BIOS_INFO *BiosInfo)
         LogToFile(LogFile, Log);
 
         // Apply Insyde-specific patches (form visibility flags)
-        UINTN PatchCount = PatchInsydeForms(ImageInfo->ImageBase, ImageInfo->ImageSize);
+        (VOID)PatchInsydeForms(ImageInfo->ImageBase, ImageInfo->ImageSize);
 
         // Also parse IFR data
         IFR_PATCH *PatchList = NULL;
@@ -248,11 +248,11 @@ EFI_STATUS ExecuteSetupBrowser(EFI_HANDLE ImageHandle, BIOS_INFO *BiosInfo)
     
     if (BiosInfo->Type == BIOS_TYPE_AMI || BiosInfo->Type == BIOS_TYPE_AMI_HP_CUSTOM)
     {
-        PatchAmiForms(ImageInfo->ImageBase, ImageInfo->ImageSize);
+        (VOID)PatchAmiForms(ImageInfo->ImageBase, ImageInfo->ImageSize);
     }
     else if (BiosInfo->Type == BIOS_TYPE_INSYDE)
     {
-        PatchInsydeForms(ImageInfo->ImageBase, ImageInfo->ImageSize);
+        (VOID)PatchInsydeForms(ImageInfo->ImageBase, ImageInfo->ImageSize);
     }
 
     IFR_PATCH *PatchList = NULL;

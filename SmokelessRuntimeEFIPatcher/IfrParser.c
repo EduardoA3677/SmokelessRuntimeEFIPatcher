@@ -60,7 +60,7 @@ EFI_STATUS ParseIfrData(VOID *ImageBase, UINTN ImageSize, IFR_PATCH **PatchList)
 
                 // Check for opcodes that hide forms/menus
                 if (OpHeader->OpCode == EFI_IFR_SUPPRESS_IF_OP ||
-                    OpHeader->OpCode == EFI_IFR_GRAYOUT_IF_OP ||
+                    OpHeader->OpCode == EFI_IFR_GRAY_OUT_IF_OP ||
                     OpHeader->OpCode == EFI_IFR_DISABLE_IF_OP)
                 {
                     // Create a patch entry
@@ -91,7 +91,7 @@ EFI_STATUS ParseIfrData(VOID *ImageBase, UINTN ImageSize, IFR_PATCH **PatchList)
                                 if (OpHeader->OpCode == EFI_IFR_SUPPRESS_IF_OP)
                                     UnicodeSPrint(Patch->Description, sizeof(Patch->Description), 
                                                 L"Patch SuppressIf at 0x%x", IfrOffset);
-                                else if (OpHeader->OpCode == EFI_IFR_GRAYOUT_IF_OP)
+                                else if (OpHeader->OpCode == EFI_IFR_GRAY_OUT_IF_OP)
                                     UnicodeSPrint(Patch->Description, sizeof(Patch->Description), 
                                                 L"Patch GrayoutIf at 0x%x", IfrOffset);
                                 else
@@ -128,7 +128,7 @@ EFI_STATUS ParseIfrData(VOID *ImageBase, UINTN ImageSize, IFR_PATCH **PatchList)
                 IfrOffset += OpHeader->Length;
 
                 // Safety check: if we hit EndFormSet, we're done with this IFR section
-                if (OpHeader->OpCode == EFI_IFR_END_FORM_SET_OP)
+                if (OpHeader->OpCode == EFI_IFR_END_OP)
                     break;
             }
         }

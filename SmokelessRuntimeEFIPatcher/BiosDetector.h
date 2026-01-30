@@ -3,6 +3,7 @@
 #include <Library/UefiLib.h>
 #include <Library/BaseMemoryLib.h>
 #include <Library/MemoryAllocationLib.h>
+#include <PiDxe.h>
 #include <Protocol/FirmwareVolume2.h>
 
 // BIOS Type enumeration

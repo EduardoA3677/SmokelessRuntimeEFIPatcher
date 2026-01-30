@@ -2,6 +2,8 @@
 #include <Guid/SmBios.h>
 #include <Protocol/Smbios.h>
 #include <IndustryStandard/SmBios.h>
+#include <Library/PrintLib.h>
+#include <Library/UefiBootServicesTableLib.h>
 
 extern char Log[512];
 extern EFI_FILE *LogFile;
@@ -106,7 +108,6 @@ EFI_STATUS DetectBiosType(BIOS_INFO *BiosInfo)
                 
                 // Get strings from SMBIOS
                 CHAR8 *StringPtr = (CHAR8 *)Record + Record->Length;
-                UINTN StringIndex = 1;
                 
                 // Extract Vendor string
                 if (Type0Record->Vendor > 0)

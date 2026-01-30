@@ -1,6 +1,8 @@
 #pragma once
 #include <Uefi.h>
 #include <Library/UefiLib.h>
+#include <PiDxe.h>
+#include <Protocol/FirmwareVolume2.h>
 #include "BiosDetector.h"
 #include "IfrParser.h"
 
