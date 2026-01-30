@@ -17,16 +17,65 @@ As the original creator/maintainer is gone, do not request new features. Feel fr
 ### What?
 This is a tool to patch and inject EFI modules at runtime. SmokelessCPUv2 developed this as they weren't comfortable with SPI flashing, which requires opening the laptop for every small change. With secure boot, you can no longer flash unsigned BIOSes.
 
-**Version 0.2.0 adds intelligent auto-detection and patching** - it can now automatically detect your BIOS type and patch hidden menus without requiring a config file!
+**Version 0.3.0 adds an interactive graphical menu interface!** Navigate BIOS settings with arrow keys, view hidden options, and choose your patching strategy from a user-friendly menu.
+
+**Version 0.2.0 added intelligent auto-detection and patching** - automatically detects your BIOS type and patches hidden menus without requiring a config file.
 
 ### Why?
 The tool was developed as a way to unlock a BIOS without the risks/issues/annoyances associated with SPI flashing. Additionally with the usage of secure boot it is no longer possible (in most cases) to get the BIOS to flash itself with an unsigned BIOS.
 
 ## Operating Modes
 
-### AUTO Mode (New in v0.2.0) - Recommended
+### INTERACTIVE Mode (New in v0.3.0) - Default & Recommended
 
-When no config file is present, SREP operates in **AUTO mode** and automatically:
+**New in v0.3.0!** SREP now features a full graphical menu interface with keyboard navigation.
+
+**Features**:
+- 🎨 **Graphical Menu System**: Navigate with arrow keys (↑↓), select with Enter, go back with ESC
+- 📋 **Multiple Options**: 
+  - Auto-detect and patch BIOS
+  - Browse BIOS settings (read-only)
+  - Launch Setup Browser directly
+  - About and Exit options
+- 🔍 **BIOS Browser**: View all available BIOS pages and forms
+- 🎯 **Hidden Option Highlighting**: See which options were unlocked (shown in green)
+- 💡 **Help Text**: Each option shows description at the bottom
+- ✅ **Confirmation Dialogs**: Safe with yes/no prompts
+
+**How it Looks**:
+```
++--------------------------------------------------+
+| SmokelessRuntimeEFIPatcher - Main Menu          |
++--------------------------------------------------+
+  SREP v0.3.0 - Interactive BIOS Patcher
+  -------------------------------------------
+> Auto-Detect and Patch BIOS
+  Browse BIOS Settings  
+  Launch Setup Browser
+  -------------------------------------------
+  About
+  Exit
+
+Use Arrow Keys to navigate | Enter to select | ESC to go back
+Automatically detect BIOS type and apply patches
+```
+
+**Usage (INTERACTIVE mode)**:
+```bash
+# Simply boot the EFI file - you'll see the menu!
+# Use arrow keys to navigate and Enter to select
+```
+
+**To Skip Interactive Mode**:
+If you want to bypass the menu and use auto-patch directly (v0.2.0 behavior):
+```bash
+# Create an empty file named SREP_Auto.flag in the same directory
+touch SREP_Auto.flag
+```
+
+### AUTO Mode (v0.2.0)
+
+When SREP_Auto.flag is present, SREP operates in **AUTO mode** and automatically:
 
 1. **Detects BIOS Type** via SMBIOS:
    - AMI BIOS
@@ -53,7 +102,7 @@ When no config file is present, SREP operates in **AUTO mode** and automatically
 
 **Usage (AUTO mode)**:
 ```bash
-# Simply boot the EFI file without any config file
+# Create SREP_Auto.flag to enable auto mode
 # SREP will automatically detect and patch your BIOS
 ```
 
@@ -61,10 +110,68 @@ When no config file is present, SREP operates in **AUTO mode** and automatically
 
 For advanced users or specific patches, SREP still supports manual configuration files.
 
-### How?
-When the EFI App is booted up, it looks for a file called *SREP_Config.cfg* in the root of the drive it booted from. If found, it operates in MANUAL mode. If not found, it operates in AUTO mode.
+When a file named `SREP_Config.cfg` is present, SREP operates in MANUAL mode using the config file instructions.
 
-### Usage (MANUAL mode)
+## Mode Selection Priority
+
+1. **MANUAL Mode**: If `SREP_Config.cfg` exists → Use config file
+2. **AUTO Mode**: If `SREP_Auto.flag` exists → Skip menu, auto-patch
+3. **INTERACTIVE Mode**: Default → Show menu interface
+
+## Features by Version
+
+### v0.3.0 - Interactive Menu Interface
+- ✨ **NEW**: Graphical menu system with keyboard navigation
+- ✨ **NEW**: BIOS browser to view forms and pages
+- ✨ **NEW**: Interactive mode selection
+- ✨ **NEW**: Message boxes and confirmation dialogs
+- ✨ **NEW**: Color-coded display (hidden options in green)
+- ✨ **NEW**: Help text for each menu option
+- ✨ **NEW**: Multi-page menu support with back navigation
+
+### v0.2.0 - Auto-Detection
+- ✨ Automatic BIOS type detection (AMI, Insyde, Phoenix)
+- ✨ Intelligent IFR parsing and patching
+- ✨ Auto-detection of Setup and FormBrowser modules
+- ✨ Patches suppressif, grayoutif, disableif conditions
+- ✨ Write protection bypass
+- ✨ Automatic Setup browser launch
+
+### v0.1.x - Original
+- Manual config file mode
+- Pattern-based patching
+- Module loading and execution
+
+## How to Use
+
+### Quick Start (Interactive Mode)
+1. Copy `SmokelessRuntimeEFIPatcher.efi` to a USB drive (FAT32)
+2. Boot from USB in UEFI mode
+3. Run the EFI file
+4. Use arrow keys to navigate the menu
+5. Select "Auto-Detect and Patch BIOS"
+6. BIOS Setup will launch with hidden options unlocked!
+
+### Advanced Usage
+
+#### Browse BIOS Settings First
+```
+1. Boot SREP
+2. Select "Browse BIOS Settings" from menu
+3. Navigate through BIOS forms to see what's available
+4. ESC to return to main menu
+5. Select "Auto-Detect and Patch BIOS" when ready
+```
+
+#### Skip Interactive Menu (Quick Auto-Patch)
+```bash
+# Create flag file on USB drive
+touch SREP_Auto.flag
+# Boot SREP - will auto-patch immediately
+```
+
+### How?
+When the EFI App is booted up, it checks for mode flags:
 A file with the name ```SREP_Config.cfg``` can be located at the root of the drive the EFI boots from. You can either create your own config or use one of the many created by the community.
 
 Some configs can be found here: [Maxinator500's SREP-Patches](https://github.com/Maxinator500/SREP-Patches)
