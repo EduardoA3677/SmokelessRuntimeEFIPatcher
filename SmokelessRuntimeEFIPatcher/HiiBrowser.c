@@ -1,5 +1,6 @@
 #include "HiiBrowser.h"
 #include "Constants.h"
+#include "IfrOpcodes.h"
 #include <Library/DebugLib.h>
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/UefiRuntimeServicesTableLib.h>
@@ -219,7 +220,7 @@ STATIC EFI_STATUS ParseIfrPackage(
                             Forms[Count].Title = AllocateCopyPool(StrSize(L"BIOS Form"), L"BIOS Form");
                         }
                         
-                        Forms[Count].IsHidden = InSuppressIf;
+                        Forms[Count].IsHidden = FALSE;  // Always show (ignore SUPPRESS_IF)
                         Count++;
                     }
                 }
@@ -228,7 +229,8 @@ STATIC EFI_STATUS ParseIfrPackage(
             
             case EFI_IFR_SUPPRESS_IF_OP:
             {
-                InSuppressIf = TRUE;
+                // NEW: Ignore SUPPRESS_IF - always show all forms
+                // InSuppressIf = TRUE;  // DISABLED per requirements
                 break;
             }
             
@@ -474,12 +476,272 @@ STATIC EFI_STATUS ParseFormQuestions(
             }
             
             case EFI_IFR_SUPPRESS_IF_OP:
-                InSuppressIf = TRUE;
+                // NEW: Ignore SUPPRESS_IF - always show all options
+                // InSuppressIf = TRUE;  // DISABLED per requirements
                 break;
             
             case EFI_IFR_GRAY_OUT_IF_OP:
+                // Still track grayout state (not suppressed per requirements)
                 InGrayoutIf = TRUE;
                 break;
+            
+            // TEXT opcode - Display read-only information
+            case EFI_IFR_TEXT_OP:
+            {
+                if (!InTargetForm)
+                    break;
+                
+                // Check capacity
+                if (Count >= Capacity)
+                {
+                    Capacity *= 2;
+                    HII_QUESTION_INFO *NewQuestions = AllocateZeroPool(sizeof(HII_QUESTION_INFO) * Capacity);
+                    if (NewQuestions != NULL)
+                    {
+                        CopyMem(NewQuestions, Questions, sizeof(HII_QUESTION_INFO) * Count);
+                        FreePool(Questions);
+                        Questions = NewQuestions;
+                    }
+                }
+                
+                if (Count < Capacity && Offset + sizeof(EFI_IFR_TEXT) <= IfrSize)
+                {
+                    EFI_IFR_TEXT *Text = (EFI_IFR_TEXT *)OpHeader;
+                    HII_QUESTION_INFO *Question = &Questions[Count];
+                    
+                    Question->Type = MENU_ITEM_INFO;  // Special type for INFO display
+                    Question->IsHidden = FALSE;  // Always show
+                    Question->IsGrayedOut = InGrayoutIf;
+                    
+                    // Get prompt text
+                    if (!EFI_ERROR(Status) && HiiString != NULL && Text->Prompt != 0)
+                    {
+                        UINTN StringSize = 0;
+                        HiiString->GetString(HiiString, "en-US", HiiHandle, Text->Prompt, NULL, &StringSize, NULL);
+                        
+                        if (StringSize > 0)
+                        {
+                            Question->Prompt = AllocateZeroPool(StringSize);
+                            if (Question->Prompt != NULL)
+                            {
+                                HiiString->GetString(HiiString, "en-US", HiiHandle, Text->Prompt,
+                                                    Question->Prompt, &StringSize, NULL);
+                            }
+                        }
+                    }
+                    
+                    // Get help/second text
+                    if (!EFI_ERROR(Status) && HiiString != NULL && Text->TextTwo != 0)
+                    {
+                        UINTN StringSize = 0;
+                        HiiString->GetString(HiiString, "en-US", HiiHandle, Text->TextTwo, NULL, &StringSize, NULL);
+                        
+                        if (StringSize > 0)
+                        {
+                            Question->HelpText = AllocateZeroPool(StringSize);
+                            if (Question->HelpText != NULL)
+                            {
+                                HiiString->GetString(HiiString, "en-US", HiiHandle, Text->TextTwo,
+                                                    Question->HelpText, &StringSize, NULL);
+                            }
+                        }
+                    }
+                    
+                    if (Question->Prompt)
+                        Count++;
+                }
+                break;
+            }
+            
+            // SUBTITLE opcode - Section headers
+            case EFI_IFR_SUBTITLE_OP:
+            {
+                if (!InTargetForm)
+                    break;
+                
+                // Check capacity
+                if (Count >= Capacity)
+                {
+                    Capacity *= 2;
+                    HII_QUESTION_INFO *NewQuestions = AllocateZeroPool(sizeof(HII_QUESTION_INFO) * Capacity);
+                    if (NewQuestions != NULL)
+                    {
+                        CopyMem(NewQuestions, Questions, sizeof(HII_QUESTION_INFO) * Count);
+                        FreePool(Questions);
+                        Questions = NewQuestions;
+                    }
+                }
+                
+                if (Count < Capacity && Offset + sizeof(EFI_IFR_SUBTITLE) <= IfrSize)
+                {
+                    EFI_IFR_SUBTITLE *Subtitle = (EFI_IFR_SUBTITLE *)OpHeader;
+                    HII_QUESTION_INFO *Question = &Questions[Count];
+                    
+                    Question->Type = MENU_ITEM_SEPARATOR;  // Special type for separator
+                    Question->IsHidden = FALSE;  // Always show
+                    
+                    // Get subtitle text
+                    if (!EFI_ERROR(Status) && HiiString != NULL && Subtitle->Prompt != 0)
+                    {
+                        UINTN StringSize = 0;
+                        HiiString->GetString(HiiString, "en-US", HiiHandle, Subtitle->Prompt, NULL, &StringSize, NULL);
+                        
+                        if (StringSize > 0)
+                        {
+                            Question->Prompt = AllocateZeroPool(StringSize);
+                            if (Question->Prompt != NULL)
+                            {
+                                HiiString->GetString(HiiString, "en-US", HiiHandle, Subtitle->Prompt,
+                                                    Question->Prompt, &StringSize, NULL);
+                            }
+                        }
+                    }
+                    
+                    if (Question->Prompt)
+                        Count++;
+                }
+                break;
+            }
+            
+            // REF opcode - Form references (submenus)
+            case EFI_IFR_REF_OP:
+            {
+                if (!InTargetForm)
+                    break;
+                
+                // Check capacity
+                if (Count >= Capacity)
+                {
+                    Capacity *= 2;
+                    HII_QUESTION_INFO *NewQuestions = AllocateZeroPool(sizeof(HII_QUESTION_INFO) * Capacity);
+                    if (NewQuestions != NULL)
+                    {
+                        CopyMem(NewQuestions, Questions, sizeof(HII_QUESTION_INFO) * Count);
+                        FreePool(Questions);
+                        Questions = NewQuestions;
+                    }
+                }
+                
+                if (Count < Capacity && Offset + sizeof(EFI_IFR_REF) <= IfrSize)
+                {
+                    EFI_IFR_REF *Ref = (EFI_IFR_REF *)OpHeader;
+                    HII_QUESTION_INFO *Question = &Questions[Count];
+                    
+                    Question->Type = EFI_IFR_REF_OP;
+                    Question->QuestionId = Ref->Question.QuestionId;
+                    Question->IsReference = TRUE;
+                    Question->RefFormId = Ref->FormId;
+                    Question->IsHidden = FALSE;  // Always show
+                    Question->IsGrayedOut = InGrayoutIf;
+                    
+                    // Get prompt text
+                    if (!EFI_ERROR(Status) && HiiString != NULL && Ref->Question.Header.Prompt != 0)
+                    {
+                        UINTN StringSize = 0;
+                        HiiString->GetString(HiiString, "en-US", HiiHandle, Ref->Question.Header.Prompt, NULL, &StringSize, NULL);
+                        
+                        if (StringSize > 0)
+                        {
+                            Question->Prompt = AllocateZeroPool(StringSize);
+                            if (Question->Prompt != NULL)
+                            {
+                                HiiString->GetString(HiiString, "en-US", HiiHandle, Ref->Question.Header.Prompt,
+                                                    Question->Prompt, &StringSize, NULL);
+                            }
+                        }
+                    }
+                    
+                    // Get help text
+                    if (!EFI_ERROR(Status) && HiiString != NULL && Ref->Question.Header.Help != 0)
+                    {
+                        UINTN StringSize = 0;
+                        HiiString->GetString(HiiString, "en-US", HiiHandle, Ref->Question.Header.Help, NULL, &StringSize, NULL);
+                        
+                        if (StringSize > 0)
+                        {
+                            Question->HelpText = AllocateZeroPool(StringSize);
+                            if (Question->HelpText != NULL)
+                            {
+                                HiiString->GetString(HiiString, "en-US", HiiHandle, Ref->Question.Header.Help,
+                                                    Question->HelpText, &StringSize, NULL);
+                            }
+                        }
+                    }
+                    
+                    if (Question->Prompt)
+                        Count++;
+                }
+                break;
+            }
+            
+            // ACTION opcode - Action buttons
+            case EFI_IFR_ACTION_OP:
+            {
+                if (!InTargetForm)
+                    break;
+                
+                // Check capacity
+                if (Count >= Capacity)
+                {
+                    Capacity *= 2;
+                    HII_QUESTION_INFO *NewQuestions = AllocateZeroPool(sizeof(HII_QUESTION_INFO) * Capacity);
+                    if (NewQuestions != NULL)
+                    {
+                        CopyMem(NewQuestions, Questions, sizeof(HII_QUESTION_INFO) * Count);
+                        FreePool(Questions);
+                        Questions = NewQuestions;
+                    }
+                }
+                
+                if (Count < Capacity && Offset + sizeof(EFI_IFR_ACTION) <= IfrSize)
+                {
+                    EFI_IFR_ACTION *Action = (EFI_IFR_ACTION *)OpHeader;
+                    HII_QUESTION_INFO *Question = &Questions[Count];
+                    
+                    Question->Type = MENU_ITEM_ACTION;
+                    Question->QuestionId = Action->Question.QuestionId;
+                    Question->IsHidden = FALSE;  // Always show
+                    Question->IsGrayedOut = InGrayoutIf;
+                    
+                    // Get prompt text
+                    if (!EFI_ERROR(Status) && HiiString != NULL && Action->Question.Header.Prompt != 0)
+                    {
+                        UINTN StringSize = 0;
+                        HiiString->GetString(HiiString, "en-US", HiiHandle, Action->Question.Header.Prompt, NULL, &StringSize, NULL);
+                        
+                        if (StringSize > 0)
+                        {
+                            Question->Prompt = AllocateZeroPool(StringSize);
+                            if (Question->Prompt != NULL)
+                            {
+                                HiiString->GetString(HiiString, "en-US", HiiHandle, Action->Question.Header.Prompt,
+                                                    Question->Prompt, &StringSize, NULL);
+                            }
+                        }
+                    }
+                    
+                    // Get help text
+                    if (!EFI_ERROR(Status) && HiiString != NULL && Action->Question.Header.Help != 0)
+                    {
+                        UINTN StringSize = 0;
+                        HiiString->GetString(HiiString, "en-US", HiiHandle, Action->Question.Header.Help, NULL, &StringSize, NULL);
+                        
+                        if (StringSize > 0)
+                        {
+                            Question->HelpText = AllocateZeroPool(StringSize);
+                            if (Question->HelpText != NULL)
+                            {
+                                HiiString->GetString(HiiString, "en-US", HiiHandle, Action->Question.Header.Help,
+                                                    Question->HelpText, &StringSize, NULL);
+                            }
+                        }
+                    }
+                    
+                    if (Question->Prompt)
+                        Count++;
+                }
+                break;
+            }
             
             // Handle different question types
             case EFI_IFR_ONE_OF_OP:
@@ -583,7 +845,7 @@ STATIC EFI_STATUS ParseFormQuestions(
                         
                         Question->QuestionId = QuestionId;
                         Question->Type = OpHeader->OpCode;
-                        Question->IsHidden = InSuppressIf;
+                        Question->IsHidden = FALSE;  // Always show (ignore SUPPRESS_IF)
                         Question->IsGrayedOut = InGrayoutIf;
                         Question->IsModified = FALSE;
                         
@@ -627,6 +889,127 @@ STATIC EFI_STATUS ParseFormQuestions(
                         }
                         
                         Count++;
+                    }
+                }
+                break;
+            }
+            
+            // ONE_OF_OPTION opcode - Options for OneOf questions (CRITICAL)
+            case EFI_IFR_ONE_OF_OPTION_OP:
+            {
+                // Find the most recent OneOf question to add option to
+                if (Count > 0 && Questions[Count - 1].Type == EFI_IFR_ONE_OF_OP &&
+                    Offset + sizeof(EFI_IFR_ONE_OF_OPTION) <= IfrSize)
+                {
+                    EFI_IFR_ONE_OF_OPTION *Option = (EFI_IFR_ONE_OF_OPTION *)OpHeader;
+                    HII_QUESTION_INFO *Question = &Questions[Count - 1];
+                    
+                    // Expand options array if needed
+                    if (Question->Options == NULL)
+                    {
+                        Question->Options = AllocateZeroPool(sizeof(HII_OPTION_INFO) * 4);
+                        Question->OptionCount = 0;
+                    }
+                    else if ((Question->OptionCount % 4) == 0 && Question->OptionCount > 0)
+                    {
+                        // Need to expand
+                        UINTN NewCapacity = Question->OptionCount + 4;
+                        HII_OPTION_INFO *NewOptions = AllocateZeroPool(sizeof(HII_OPTION_INFO) * NewCapacity);
+                        if (NewOptions)
+                        {
+                            CopyMem(NewOptions, Question->Options, sizeof(HII_OPTION_INFO) * Question->OptionCount);
+                            FreePool(Question->Options);
+                            Question->Options = NewOptions;
+                        }
+                    }
+                    
+                    if (Question->Options)
+                    {
+                        UINTN OptIndex = Question->OptionCount;
+                        
+                        // Get option text
+                        if (!EFI_ERROR(Status) && HiiString != NULL && Option->Option != 0)
+                        {
+                            UINTN StringSize = 0;
+                            HiiString->GetString(HiiString, "en-US", HiiHandle, Option->Option, NULL, &StringSize, NULL);
+                            
+                            if (StringSize > 0)
+                            {
+                                Question->Options[OptIndex].Text = AllocateZeroPool(StringSize);
+                                if (Question->Options[OptIndex].Text != NULL)
+                                {
+                                    HiiString->GetString(HiiString, "en-US", HiiHandle, Option->Option,
+                                                        Question->Options[OptIndex].Text, &StringSize, NULL);
+                                }
+                            }
+                        }
+                        
+                        // Extract option value based on type
+                        UINT8 *ValuePtr = (UINT8 *)Option + sizeof(EFI_IFR_ONE_OF_OPTION);
+                        UINT64 OptionValue = 0;
+                        
+                        switch (Option->Type)
+                        {
+                            case EFI_IFR_TYPE_NUM_SIZE_8:
+                                OptionValue = *(UINT8 *)ValuePtr;
+                                break;
+                            case EFI_IFR_TYPE_NUM_SIZE_16:
+                                OptionValue = *(UINT16 *)ValuePtr;
+                                break;
+                            case EFI_IFR_TYPE_NUM_SIZE_32:
+                                OptionValue = *(UINT32 *)ValuePtr;
+                                break;
+                            case EFI_IFR_TYPE_NUM_SIZE_64:
+                                OptionValue = *(UINT64 *)ValuePtr;
+                                break;
+                            default:
+                                OptionValue = 0;
+                                break;
+                        }
+                        
+                        Question->Options[OptIndex].Value = OptionValue;
+                        Question->OptionCount++;
+                    }
+                }
+                break;
+            }
+            
+            // DEFAULT opcode - Default values for questions
+            case EFI_IFR_DEFAULT_OP:
+            {
+                // Find the most recent question to set default value
+                if (Count > 0 && Offset + sizeof(EFI_IFR_DEFAULT) <= IfrSize)
+                {
+                    EFI_IFR_DEFAULT *Default = (EFI_IFR_DEFAULT *)OpHeader;
+                    HII_QUESTION_INFO *Question = &Questions[Count - 1];
+                    
+                    // Extract default value based on type
+                    UINT8 *ValuePtr = (UINT8 *)Default + sizeof(EFI_IFR_DEFAULT);
+                    UINT64 DefaultValue = 0;
+                    
+                    switch (Default->Type)
+                    {
+                        case EFI_IFR_TYPE_NUM_SIZE_8:
+                            DefaultValue = *(UINT8 *)ValuePtr;
+                            break;
+                        case EFI_IFR_TYPE_NUM_SIZE_16:
+                            DefaultValue = *(UINT16 *)ValuePtr;
+                            break;
+                        case EFI_IFR_TYPE_NUM_SIZE_32:
+                            DefaultValue = *(UINT32 *)ValuePtr;
+                            break;
+                        case EFI_IFR_TYPE_NUM_SIZE_64:
+                            DefaultValue = *(UINT64 *)ValuePtr;
+                            break;
+                        default:
+                            DefaultValue = 0;
+                            break;
+                    }
+                    
+                    // Store default value
+                    if (Question->DefaultValue == NULL)
+                    {
+                        Question->DefaultValue = AllocateCopyPool(sizeof(UINT64), &DefaultValue);
                     }
                 }
                 break;
