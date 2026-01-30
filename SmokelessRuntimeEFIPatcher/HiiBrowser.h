@@ -22,6 +22,12 @@ typedef struct {
     BOOLEAN IsHidden;       // Was this form suppressed/hidden
 } HII_FORM_INFO;
 
+// HII OneOf Option information
+typedef struct {
+    CHAR16 *Text;           // Option display text
+    UINT64 Value;           // Option value
+} HII_OPTION_INFO;
+
 // HII Question/Option information
 typedef struct {
     UINT16 QuestionId;
@@ -39,6 +45,16 @@ typedef struct {
     BOOLEAN IsHidden;       // Was this option suppressed/hidden
     BOOLEAN IsGrayedOut;    // Was this option grayed out
     BOOLEAN IsModified;     // Has value been changed
+    
+    // OneOf options
+    HII_OPTION_INFO *Options;  // Array of options for OneOf questions
+    UINTN OptionCount;         // Number of options
+    UINT64 CurrentOneOfValue;  // Current selected value for OneOf
+    
+    // Form reference (for submenus)
+    BOOLEAN IsReference;    // Is this a form reference/submenu?
+    UINT16 RefFormId;       // Referenced form ID
+    EFI_GUID RefFormSetGuid; // Referenced formset GUID
 } HII_QUESTION_INFO;
 
 // HII Browser context
@@ -125,9 +141,24 @@ EFI_STATUS HiiBrowserEditQuestion(
 );
 
 /**
+ * Callback: Edit question value (for ENTER key)
+ */
+EFI_STATUS HiiBrowserCallback_EditQuestion(MENU_ITEM *Item, VOID *Context);
+
+/**
  * Save all modified values to NVRAM
  */
 EFI_STATUS HiiBrowserSaveChanges(HII_BROWSER_CONTEXT *Context);
+
+/**
+ * Show save confirmation dialog (for F10)
+ */
+EFI_STATUS HiiBrowserShowSaveDialog(HII_BROWSER_CONTEXT *Context);
+
+/**
+ * Check if there are any unsaved changes
+ */
+BOOLEAN HiiBrowserHasChanges(HII_BROWSER_CONTEXT *Context);
 
 /**
  * Clean up HII browser resources
