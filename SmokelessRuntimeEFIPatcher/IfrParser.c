@@ -36,16 +36,16 @@ EFI_STATUS ParseIfrData(VOID *ImageBase, UINTN ImageSize, IFR_PATCH **PatchList)
 
     *PatchList = NULL;
 
-    AsciiSPrint(Log, 512, "Parsing IFR data in module (size: 0x%x)...\n\r", ImageSize);
-    LogToFile(LogFile, Log);
+    // Don't log for every module - too verbose
+    // Only log when patches are found
 
     // Search for IFR data in the image
     for (Offset = 0; Offset < ImageSize - 4; Offset++)
     {
         if (IsIfrData(&Data[Offset], ImageSize - Offset))
         {
-            AsciiSPrint(Log, 512, "Found IFR data at offset 0x%x\n\r", Offset);
-            LogToFile(LogFile, Log);
+            // Don't log every IFR data location - too verbose
+            // Will log summary at the end
 
             UINTN IfrOffset = Offset;
             UINTN IfrEnd = ImageSize;
@@ -63,9 +63,8 @@ EFI_STATUS ParseIfrData(VOID *ImageBase, UINTN ImageSize, IFR_PATCH **PatchList)
                     OpHeader->OpCode == EFI_IFR_GRAY_OUT_IF_OP ||
                     OpHeader->OpCode == EFI_IFR_DISABLE_IF_OP)
                 {
-                    AsciiSPrint(Log, 512, "Found hideable element at 0x%x (opcode: 0x%02x)\n\r", 
-                               IfrOffset, OpHeader->OpCode);
-                    LogToFile(LogFile, Log);
+                    // Don't log every hideable element - too verbose
+                    // Will create patch and log when applied
 
                     // Strategy: Patch the condition following these opcodes
                     // Look at the next opcode to see what condition it is
@@ -119,8 +118,13 @@ EFI_STATUS ParseIfrData(VOID *ImageBase, UINTN ImageSize, IFR_PATCH **PatchList)
     }
 
     *PatchList = Head;
-    AsciiSPrint(Log, 512, "IFR parsing complete. Found %d patches to apply.\n\r", PatchCount);
-    LogToFile(LogFile, Log);
+    
+    // Only log if patches were found (reduce verbosity)
+    if (PatchCount > 0)
+    {
+        AsciiSPrint(Log, 512, "Found %d IFR patches in module\n\r", PatchCount);
+        LogToFile(LogFile, Log);
+    }
 
     return PatchCount > 0 ? EFI_SUCCESS : EFI_NOT_FOUND;
 }
@@ -137,8 +141,8 @@ EFI_STATUS ApplyIfrPatches(VOID *ImageBase, UINTN ImageSize, IFR_PATCH *PatchLis
     if (ImageBase == NULL || PatchList == NULL)
         return EFI_INVALID_PARAMETER;
 
-    AsciiSPrint(Log, 512, "Applying IFR patches...\n\r");
-    LogToFile(LogFile, Log);
+    // Don't log "Applying IFR patches..." for every module - too verbose
+    // Will log summary at the end
 
     while (Current != NULL)
     {
@@ -150,22 +154,26 @@ EFI_STATUS ApplyIfrPatches(VOID *ImageBase, UINTN ImageSize, IFR_PATCH *PatchLis
                 Data[Current->Offset] = Current->NewOpCode;
                 AppliedCount++;
                 
-                AsciiSPrint(Log, 512, "Applied patch: %s (0x%02x -> 0x%02x)\n\r",
-                           Current->Description, Current->OriginalOpCode, Current->NewOpCode);
-                LogToFile(LogFile, Log);
+                // Only log individual patches if there are few of them
+                // Otherwise just log the count
+                if (AppliedCount <= 5)
+                {
+                    AsciiSPrint(Log, 512, "  Patched: %s (0x%02x -> 0x%02x)\n\r",
+                               Current->Description, Current->OriginalOpCode, Current->NewOpCode);
+                    LogToFile(LogFile, Log);
+                }
             }
-            else
-            {
-                AsciiSPrint(Log, 512, "Warning: Patch %s - opcode mismatch at 0x%x (expected 0x%02x, found 0x%02x)\n\r",
-                           Current->Description, Current->Offset, Current->OriginalOpCode, Data[Current->Offset]);
-                LogToFile(LogFile, Log);
-            }
+            // Don't log warnings for mismatches - already patched locations will show this
         }
         Current = Current->Next;
     }
 
-    AsciiSPrint(Log, 512, "Applied %d IFR patches.\n\r", AppliedCount);
-    LogToFile(LogFile, Log);
+    // Only log if patches were applied
+    if (AppliedCount > 0)
+    {
+        AsciiSPrint(Log, 512, "Applied %d IFR patches\n\r", AppliedCount);
+        LogToFile(LogFile, Log);
+    }
 
     return EFI_SUCCESS;
 }
@@ -192,8 +200,7 @@ UINTN PatchAmiForms(VOID *ImageBase, UINTN ImageSize)
     UINT8 *Data = (UINT8 *)ImageBase;
     UINTN PatchCount = 0;
 
-    AsciiSPrint(Log, 512, "Applying AMI-specific form patches...\n\r");
-    LogToFile(LogFile, Log);
+    // Don't log "Applying AMI-specific..." for every module - too verbose
 
     // AMI often uses specific patterns for advanced menus
     // Look for common suppress patterns
@@ -207,14 +214,15 @@ UINTN PatchAmiForms(VOID *ImageBase, UINTN ImageSize)
             // Patch TRUE to FALSE
             Data[i + 3] = EFI_IFR_FALSE_OP;
             PatchCount++;
-            
-            AsciiSPrint(Log, 512, "Patched AMI SuppressIf(TRUE) at 0x%x\n\r", i);
-            LogToFile(LogFile, Log);
         }
     }
 
-    AsciiSPrint(Log, 512, "Applied %d AMI-specific patches.\n\r", PatchCount);
-    LogToFile(LogFile, Log);
+    // Only log if patches were applied
+    if (PatchCount > 0)
+    {
+        AsciiSPrint(Log, 512, "Applied %d AMI-specific patches\n\r", PatchCount);
+        LogToFile(LogFile, Log);
+    }
 
     return PatchCount;
 }
@@ -272,15 +280,16 @@ UINTN PatchInsydeForms(VOID *ImageBase, UINTN ImageSize)
                 // Patch to 0x01000000
                 Data[i + 16] = 0x01;
                 PatchCount++;
-                
-                AsciiSPrint(Log, 512, "Patched potential Insyde form visibility at 0x%x\n\r", i);
-                LogToFile(LogFile, Log);
             }
         }
     }
 
-    AsciiSPrint(Log, 512, "Applied %d Insyde-specific patches.\n\r", PatchCount);
-    LogToFile(LogFile, Log);
+    // Only log if patches were applied
+    if (PatchCount > 0)
+    {
+        AsciiSPrint(Log, 512, "Applied %d Insyde-specific patches\n\r", PatchCount);
+        LogToFile(LogFile, Log);
+    }
 
     return PatchCount;
 }

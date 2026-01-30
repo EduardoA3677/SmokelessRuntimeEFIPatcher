@@ -19,6 +19,7 @@ EFI_STATUS PatchAllLoadedModules(EFI_HANDLE ImageHandle, BIOS_INFO *BiosInfo)
 
     AsciiSPrint(Log, 512, "\n--- Scanning All Loaded Modules ---\n\r");
     LogToFile(LogFile, Log);
+    Print(L"Scanning loaded modules...\n\r");
 
     Status = gBS->LocateHandle(ByProtocol, &gEfiLoadedImageProtocolGuid, NULL, &HandleSize, NULL);
     if (Status == EFI_BUFFER_TOO_SMALL)
@@ -31,9 +32,16 @@ EFI_STATUS PatchAllLoadedModules(EFI_HANDLE ImageHandle, BIOS_INFO *BiosInfo)
             UINTN ModuleCount = HandleSize / sizeof(EFI_HANDLE);
             AsciiSPrint(Log, 512, "Found %d loaded modules to scan\n\r", ModuleCount);
             LogToFile(LogFile, Log);
+            Print(L"Scanning %d modules for IFR data...\n\r", ModuleCount);
 
             for (UINTN i = 0; i < ModuleCount; i++)
             {
+                // Show progress every 20 modules
+                if (i > 0 && i % 20 == 0)
+                {
+                    Print(L"  Progress: %d/%d modules scanned\n\r", i, ModuleCount);
+                }
+                
                 EFI_LOADED_IMAGE_PROTOCOL *ImageInfo = NULL;
                 Status = gBS->HandleProtocol(Handles[i], &gEfiLoadedImageProtocolGuid, (VOID **)&ImageInfo);
                 
@@ -50,12 +58,7 @@ EFI_STATUS PatchAllLoadedModules(EFI_HANDLE ImageHandle, BIOS_INFO *BiosInfo)
                     {
                         if (ModuleName != NULL)
                         {
-                            AsciiSPrint(Log, 512, "Patching module: %s at 0x%x\n\r", ModuleName, ImageInfo->ImageBase);
-                            LogToFile(LogFile, Log);
-                        }
-                        else
-                        {
-                            AsciiSPrint(Log, 512, "Patching unnamed module at 0x%x\n\r", ImageInfo->ImageBase);
+                            AsciiSPrint(Log, 512, "Patching module: %s\n\r", ModuleName);
                             LogToFile(LogFile, Log);
                         }
                         
@@ -84,6 +87,7 @@ EFI_STATUS PatchAllLoadedModules(EFI_HANDLE ImageHandle, BIOS_INFO *BiosInfo)
 
     AsciiSPrint(Log, 512, "Patched %d modules with IFR data\n\r", TotalPatches);
     LogToFile(LogFile, Log);
+    Print(L"Patched %d modules with IFR data\n\r", TotalPatches);
 
     return EFI_SUCCESS;
 }
@@ -548,8 +552,7 @@ UINTN DisableWriteProtections(VOID *ImageBase, UINTN ImageSize)
     UINT8 *Data = (UINT8 *)ImageBase;
     UINTN PatchCount = 0;
 
-    AsciiSPrint(Log, 512, "Searching for write protection checks...\n\r");
-    LogToFile(LogFile, Log);
+    // Don't log "Searching for..." for every module - too verbose
 
     // Common patterns for write protection checks:
     // 1. Flash write enable/disable checks
@@ -571,8 +574,6 @@ UINTN DisableWriteProtections(VOID *ImageBase, UINTN ImageSize)
                 {
                     Data[i + 2] = 0xEB;  // jmp unconditional
                     PatchCount++;
-                    AsciiSPrint(Log, 512, "Patched protection check at 0x%x (jnz -> jmp)\n\r", i);
-                    LogToFile(LogFile, Log);
                 }
             }
         }
@@ -600,16 +601,18 @@ UINTN DisableWriteProtections(VOID *ImageBase, UINTN ImageSize)
                         Data[i + 1] = 0xC0;  // eax, eax
                         Data[i + 2] = 0x90;  // nop
                         PatchCount++;
-                        AsciiSPrint(Log, 512, "Patched return check at 0x%x\n\r", i);
-                        LogToFile(LogFile, Log);
                     }
                 }
             }
         }
     }
 
-    AsciiSPrint(Log, 512, "Write protection patching complete. Applied %d patches.\n\r", PatchCount);
-    LogToFile(LogFile, Log);
+    // Only log if patches were applied
+    if (PatchCount > 0)
+    {
+        AsciiSPrint(Log, 512, "Disabled %d write protections\n\r", PatchCount);
+        LogToFile(LogFile, Log);
+    }
 
     return PatchCount;
 }
