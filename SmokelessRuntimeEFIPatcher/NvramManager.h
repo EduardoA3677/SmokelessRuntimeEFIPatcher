@@ -96,3 +96,10 @@ VOID NvramCleanup(NVRAM_MANAGER *Manager);
 extern EFI_GUID gSetupVariableGuid;
 extern EFI_GUID gAmiSetupGuid;
 extern EFI_GUID gIntelSetupGuid;
+
+// Vendor-specific GUIDs
+extern EFI_GUID gHpSetupGuid;
+extern EFI_GUID gAmdCbsGuid;
+extern EFI_GUID gAmdPbsGuid;
+extern EFI_GUID gIntelMeGuid;
+extern EFI_GUID gIntelSaGuid;

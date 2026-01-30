@@ -202,27 +202,36 @@ STATIC EFI_STATUS ParseIfrPackage(
                             FreePool(Forms);
                             Forms = NewForms;
                         }
-                    }
-                    
-                    if (Count < Capacity)
-                    {
-                        Forms[Count].HiiHandle = HiiHandle;
-                        CopyMem(&Forms[Count].FormSetGuid, &CurrentFormSetGuid, sizeof(EFI_GUID));
-                        Forms[Count].FormId = CurrentFormId;
-                        
-                        if (TitleStr != NULL)
-                        {
-                            Forms[Count].Title = TitleStr;
-                        }
                         else
                         {
-                            // Fallback title
-                            Forms[Count].Title = AllocateCopyPool(StrSize(L"BIOS Form"), L"BIOS Form");
+                            if (TitleStr != NULL)
+                                FreePool(TitleStr);
+                            break;  // Out of memory
                         }
-                        
-                        Forms[Count].IsHidden = FALSE;  // Always show (ignore SUPPRESS_IF)
-                        Count++;
                     }
+                    
+                    // Fill form info
+                    Forms[Count].HiiHandle = HiiHandle;
+                    CopyMem(&Forms[Count].FormSetGuid, &CurrentFormSetGuid, sizeof(EFI_GUID));
+                    Forms[Count].FormId = CurrentFormId;
+                    
+                    if (TitleStr != NULL)
+                    {
+                        Forms[Count].Title = TitleStr;
+                    }
+                    else
+                    {
+                        // Fallback title
+                        Forms[Count].Title = AllocateCopyPool(StrSize(L"BIOS Form"), L"BIOS Form");
+                    }
+                    
+                    Forms[Count].IsHidden = InSuppressIf;
+                    
+                    // Detect vendor and category
+                    Forms[Count].Vendor = DetectVendor(Forms[Count].Title, &CurrentFormSetGuid);
+                    Forms[Count].CategoryFlags = DetectFormCategory(Forms[Count].Title);
+                    
+                    Count++;
                 }
                 break;
             }
@@ -1725,6 +1734,96 @@ VOID HiiBrowserCleanup(HII_BROWSER_CONTEXT *Context)
  * @param Title  Form title to categorize (NULL safe)
  * @return       Tab index (0=Main, 1=Advanced, 2=Power, 3=Boot, 4=Security, 5=Save&Exit)
  */
+/**
+ * Detect vendor from form title and GUID
+ */
+STATIC VENDOR_TYPE DetectVendor(CHAR16 *Title, EFI_GUID *FormSetGuid)
+{
+    if (Title == NULL)
+        return VENDOR_UNKNOWN;
+    
+    // Convert to uppercase for case-insensitive matching
+    CHAR16 Upper[MAX_TITLE_LENGTH];
+    UINTN TitleLen = StrLen(Title);
+    UINTN CopyLen = (TitleLen < MAX_TITLE_LENGTH - 1) ? TitleLen : (MAX_TITLE_LENGTH - 1);
+    
+    for (UINTN i = 0; i < CopyLen; i++)
+    {
+        if (Title[i] >= L'a' && Title[i] <= L'z')
+            Upper[i] = Title[i] - 32;
+        else
+            Upper[i] = Title[i];
+    }
+    Upper[CopyLen] = L'\0';
+    
+    // Check for HP
+    if (StrStr(Upper, KEYWORD_HP) != NULL)
+        return VENDOR_HP;
+    
+    // Check for AMD (CBS, Promontory, etc.)
+    if (StrStr(Upper, KEYWORD_AMD) != NULL || 
+        StrStr(Upper, KEYWORD_CBS) != NULL || 
+        StrStr(Upper, KEYWORD_PROMONTORY) != NULL)
+        return VENDOR_AMD;
+    
+    // Check for Intel (ME, Management Engine, etc.)
+    if (StrStr(Upper, KEYWORD_INTEL) != NULL || 
+        StrStr(Upper, KEYWORD_ME) != NULL)
+        return VENDOR_INTEL;
+    
+    return VENDOR_GENERIC;
+}
+
+/**
+ * Detect form category flags (manufacturing, engineering, debug, etc.)
+ */
+STATIC UINT8 DetectFormCategory(CHAR16 *Title)
+{
+    UINT8 Flags = FORM_CATEGORY_STANDARD;
+    
+    if (Title == NULL)
+        return Flags;
+    
+    // Convert to uppercase
+    CHAR16 Upper[MAX_TITLE_LENGTH];
+    UINTN TitleLen = StrLen(Title);
+    UINTN CopyLen = (TitleLen < MAX_TITLE_LENGTH - 1) ? TitleLen : (MAX_TITLE_LENGTH - 1);
+    
+    for (UINTN i = 0; i < CopyLen; i++)
+    {
+        if (Title[i] >= L'a' && Title[i] <= L'z')
+            Upper[i] = Title[i] - 32;
+        else
+            Upper[i] = Title[i];
+    }
+    Upper[CopyLen] = L'\0';
+    
+    // Check for special categories
+    if (StrStr(Upper, KEYWORD_MANUFACTURING) != NULL)
+        Flags |= FORM_CATEGORY_MANUFACTURING;
+    
+    if (StrStr(Upper, KEYWORD_ENGINEER) != NULL)
+        Flags |= FORM_CATEGORY_ENGINEERING;
+    
+    if (StrStr(Upper, KEYWORD_DEBUG) != NULL)
+        Flags |= FORM_CATEGORY_DEBUG;
+    
+    if (StrStr(Upper, KEYWORD_DEMO) != NULL)
+        Flags |= FORM_CATEGORY_DEMO;
+    
+    if (StrStr(Upper, KEYWORD_OEM) != NULL || 
+        StrStr(Upper, KEYWORD_VENDOR) != NULL)
+        Flags |= FORM_CATEGORY_OEM;
+    
+    if (StrStr(Upper, KEYWORD_HIDDEN) != NULL)
+        Flags |= FORM_CATEGORY_HIDDEN;
+    
+    return Flags;
+}
+
+/**
+ * Categorize form into tab by analyzing title keywords
+ */
 STATIC UINTN CategorizeForm(CHAR16 *Title)
 {
     if (Title == NULL)
@@ -1844,11 +1943,62 @@ EFI_STATUS HiiBrowserCreateDynamicTabs(
             {
                 if (CategorizeForm(Context->Forms[i].Title) == t)
                 {
+                    // Build description with vendor and category info
+                    CHAR16 Description[MAX_DESCRIPTION_LENGTH];
+                    CHAR16 *VendorStr = L"";
+                    CHAR16 *CategoryStr = L"";
+                    
+                    // Determine vendor string
+                    switch (Context->Forms[i].Vendor)
+                    {
+                        case VENDOR_HP:
+                            VendorStr = L"[HP] ";
+                            break;
+                        case VENDOR_AMD:
+                            VendorStr = L"[AMD] ";
+                            break;
+                        case VENDOR_INTEL:
+                            VendorStr = L"[Intel] ";
+                            break;
+                        default:
+                            VendorStr = L"";
+                            break;
+                    }
+                    
+                    // Build category string
+                    CHAR16 CategoryParts[MAX_DESCRIPTION_LENGTH];
+                    CategoryParts[0] = L'\0';
+                    
+                    if (Context->Forms[i].CategoryFlags & FORM_CATEGORY_MANUFACTURING)
+                        StrCatS(CategoryParts, MAX_DESCRIPTION_LENGTH / 2, L"[Manufacturing] ");
+                    if (Context->Forms[i].CategoryFlags & FORM_CATEGORY_ENGINEERING)
+                        StrCatS(CategoryParts, MAX_DESCRIPTION_LENGTH / 2, L"[Engineering] ");
+                    if (Context->Forms[i].CategoryFlags & FORM_CATEGORY_DEBUG)
+                        StrCatS(CategoryParts, MAX_DESCRIPTION_LENGTH / 2, L"[Debug] ");
+                    if (Context->Forms[i].CategoryFlags & FORM_CATEGORY_DEMO)
+                        StrCatS(CategoryParts, MAX_DESCRIPTION_LENGTH / 2, L"[Demo] ");
+                    if (Context->Forms[i].CategoryFlags & FORM_CATEGORY_OEM)
+                        StrCatS(CategoryParts, MAX_DESCRIPTION_LENGTH / 2, L"[OEM] ");
+                    
+                    // Build final description
+                    if (Context->Forms[i].IsHidden)
+                    {
+                        UnicodeSPrint(Description, sizeof(Description),
+                                     L"%s%s[Previously Hidden] - Press ENTER to view",
+                                     VendorStr, CategoryParts);
+                    }
+                    else
+                    {
+                        UnicodeSPrint(Description, sizeof(Description),
+                                     L"%s%sPress ENTER to view details",
+                                     VendorStr, CategoryParts);
+                    }
+                    
                     MenuAddActionItem(
                         TabPages[t],
                         ItemIndex,
                         Context->Forms[i].Title,
-                        Context->Forms[i].IsHidden ? L"[Previously Hidden] - Press ENTER to view" : L"Press ENTER to view details",
+                        Description,
                         HiiBrowserCallback_OpenForm,
                         &Context->Forms[i]
                     );

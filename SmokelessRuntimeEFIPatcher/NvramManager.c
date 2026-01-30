@@ -8,6 +8,16 @@ EFI_GUID gSetupVariableGuid = {0xEC87D643, 0xEBA4, 0x4BB5, {0xA1, 0xE5, 0x3F, 0x
 EFI_GUID gAmiSetupGuid = {0x560bf58a, 0x1e0d, 0x4d7e, {0x95, 0x3f, 0x29, 0x80, 0xa2, 0x61, 0xe0, 0x31}};
 EFI_GUID gIntelSetupGuid = {0xEC87D643, 0xEBA4, 0x4BB5, {0xA1, 0xE5, 0x3F, 0x3E, 0x36, 0xB2, 0x0D, 0xA9}};
 
+// Vendor-specific Setup GUIDs
+// HP-specific GUIDs (common HP BIOS GUIDs)
+EFI_GUID gHpSetupGuid = {0xB540A530, 0x6978, 0x4DA7, {0x91, 0xCB, 0x72, 0x7E, 0xD1, 0x9D, 0xD8, 0x55}};
+// AMD CBS/PBS GUIDs
+EFI_GUID gAmdCbsGuid = {0x61F7CA61, 0xC5F8, 0x4024, {0x9A, 0xC8, 0x0A, 0x76, 0xF4, 0x6B, 0xBA, 0x1A}};
+EFI_GUID gAmdPbsGuid = {0x50EA1035, 0x3F4E, 0x4D1C, {0x9E, 0x1C, 0x6B, 0x3D, 0x1E, 0x5C, 0xF8, 0x35}};
+// Intel ME/SA GUIDs
+EFI_GUID gIntelMeGuid = {0x5432122D, 0xD034, 0x49D2, {0xA6, 0xDE, 0x65, 0xD5, 0x5A, 0x0E, 0xE5, 0x70}};
+EFI_GUID gIntelSaGuid = {0x72C5E28C, 0x7783, 0x43A1, {0x87, 0x67, 0xFA, 0xD7, 0x3F, 0xCC, 0xAF, 0xA2}};
+
 /**
  * Initialize NVRAM manager
  */
@@ -132,6 +142,29 @@ EFI_STATUS NvramLoadSetupVariables(NVRAM_MANAGER *Manager)
         L"SetupDefault",
         L"PreviousBoot",
         L"BootOrder",
+        // HP-specific variables
+        L"HPSetupData",
+        L"NewHPSetupData",
+        L"HPALCSetup",
+        L"HPSystemConfig",
+        // AMD-specific variables
+        L"AmdCbsSetup",
+        L"AmdPbsSetup",
+        L"AmdSetup",
+        // Intel-specific variables
+        L"IntelSetup",
+        L"MeSetup",
+        L"SaSetup",
+        // Standard UEFI variables
+        L"AMITSESetup",
+        L"SecureBootSetup",
+        L"ALCSetup",
+        L"SetupCpuFeatures",
+        // Manufacturing/Engineering variables
+        L"ManufacturingSetup",
+        L"EngineeringSetup",
+        L"DebugSetup",
+        L"OemSetup",
         NULL
     };
     
@@ -139,13 +172,19 @@ EFI_STATUS NvramLoadSetupVariables(NVRAM_MANAGER *Manager)
         &gSetupVariableGuid,
         &gAmiSetupGuid,
         &gIntelSetupGuid,
+        &gHpSetupGuid,
+        &gAmdCbsGuid,
+        &gAmdPbsGuid,
+        &gIntelMeGuid,
+        &gIntelSaGuid,
         &gEfiGlobalVariableGuid
     };
     
+    UINTN GuidCount = 9;
     UINTN LoadedCount = 0;
     
     // Try each combination
-    for (UINTN g = 0; g < 4; g++)
+    for (UINTN g = 0; g < GuidCount; g++)
     {
         for (UINTN v = 0; CommonVarNames[v] != NULL; v++)
         {
