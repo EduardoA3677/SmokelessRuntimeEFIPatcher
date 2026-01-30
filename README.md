@@ -118,7 +118,29 @@ When a file named `SREP_Config.cfg` is present, SREP operates in MANUAL mode usi
 2. **AUTO Mode**: If `SREP_Auto.flag` exists → Skip menu, auto-patch
 3. **INTERACTIVE Mode**: Default → Show menu interface
 
-## Features by Version
+## New Requirements (v0.3.1)
+
+### El menú debe cargar módulos y guardar opciones ✅
+
+**Implementado**:
+1. ✅ **Carga de módulos del BIOS** - El menú ahora puede cargar todos los módulos Setup y sus dependencias
+2. ✅ **Guardar en NVRAM** - Las modificaciones se guardan en las variables NVRAM del BIOS real
+3. ✅ **Persistencia** - Los cambios persisten después de reiniciar (se guardan en la memoria no volátil)
+4. ✅ **Editor interactivo** - Usa teclas +/- para modificar valores numéricos
+5. ✅ **Confirmación de guardado** - Muestra diálogo de confirmación antes de escribir a NVRAM
+6. ✅ **Rollback** - Capacidad de deshacer cambios antes de guardar
+
+### Features by Version
+
+### v0.3.1 - NVRAM Manager & Module Loading
+- ✨ **NEW**: NVRAM variable manager with read/write support
+- ✨ **NEW**: Load BIOS modules from interactive menu
+- ✨ **NEW**: Edit BIOS settings and save to NVRAM
+- ✨ **NEW**: Interactive value editor (+/- keys for numeric values)
+- ✨ **NEW**: Batch save with confirmation
+- ✨ **NEW**: Rollback capability for safety
+- ✨ **NEW**: Track modified vs original values
+- ✨ **NEW**: Support for common BIOS variables (Setup, SetupVolatile, BootOrder, etc.)
 
 ### v0.3.0 - Interactive Menu Interface
 - ✨ **NEW**: Graphical menu system with keyboard navigation
@@ -153,6 +175,33 @@ When a file named `SREP_Config.cfg` is present, SREP operates in MANUAL mode usi
 6. BIOS Setup will launch with hidden options unlocked!
 
 ### Advanced Usage
+
+#### Load Modules and Edit BIOS Settings (NEW in v0.3.1)
+```
+1. Boot SREP
+2. Select "Load Modules and Edit Settings" from menu
+3. Wait while BIOS is detected and modules loaded
+4. Browse through BIOS forms
+5. Select an option to edit
+6. Use +/- keys to change numeric values
+7. Press Enter to stage the change
+8. Continue editing or select "Save Changes to NVRAM"
+9. Confirm save when prompted
+10. Changes are written to NVRAM (persist across reboots!)
+```
+
+**Supported Variables**:
+- Setup (main BIOS configuration)
+- SetupVolatile (temporary settings)
+- SetupDefault (factory defaults)
+- BootOrder (boot device order)
+- And more...
+
+**Safety Features**:
+- Changes staged in memory first
+- Confirmation before writing to NVRAM
+- Rollback capability if you change your mind
+- Per-variable error reporting
 
 #### Browse BIOS Settings First
 ```
