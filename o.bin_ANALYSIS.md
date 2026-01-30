@@ -1,11 +1,23 @@
-# Analysis Report for o.bin BIOS
+# Analysis Report for o.bin BIOS - HP Custom Edition
 
 ## BIOS Information
 
 - **Source**: https://github.com/EduardoA3677/UEFITool/releases/download/A73/o.bin
 - **File Size**: 8,388,608 bytes (8 MB)
-- **BIOS Type**: AMI Aptio (American Megatrends Inc.)
-- **Setup Module**: AMITSESetup (Text Setup Environment)
+- **BIOS Type**: **HP Custom AMI Aptio** (Hewlett-Packard)
+- **Setup Module**: AMITSESetup + HP custom modules
+- **Special HP Modules**: HPSetupData, NewHPSetupData, HPALCSetup
+
+## Important: HP-Customized BIOS
+
+This is **NOT a standard AMI BIOS**. HP uses heavily customized setup structures that differ significantly from generic AMI implementations.
+
+### HP-Specific Characteristics
+
+1. **Multiple Setup Modules**: HPSetupData + NewHPSetupData instead of single Setup module
+2. **Custom Form Structure**: 9+ interconnected form GUIDs
+3. **Vendor Lock**: HP-specific configuration layouts
+4. **Modular Design**: Distributed setup across multiple HP modules
 
 ## Analysis Results
 

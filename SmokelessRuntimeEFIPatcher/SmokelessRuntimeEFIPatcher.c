@@ -208,9 +208,59 @@ VOID ListAllLoadedModules(EFI_FILE *LogFile)
         }
     }
     
-    FreePool(Handles);
     AsciiSPrint(Log,512,"%a","=== End of Module List ===\n\n\r");
     LogToFile(LogFile,Log);
+    
+    // Detectar módulos específicos de HP antes de liberar handles
+    AsciiSPrint(Log,512,"%a","\n=== Detecting HP-Specific Modules ===\n\r");
+    LogToFile(LogFile,Log);
+    
+    BOOLEAN hpBiosDetected = FALSE;
+    CHAR8 *hpModules[] = {"HPSetupData", "NewHPSetupData", "HPALCSetup", "HPSetup"};
+    
+    for (UINTN i = 0; i < HandleSize / sizeof(EFI_HANDLE); i++)
+    {
+        Status = gBS->HandleProtocol(Handles[i], &gEfiLoadedImageProtocolGuid, (VOID **)&LoadedImageProtocol);
+        if (Status == EFI_SUCCESS)
+        {
+            CHAR16 *String = FindLoadedImageFileName(LoadedImageProtocol);
+            if (String != NULL)
+            {
+                // Verificar si es un módulo HP
+                for (UINTN j = 0; j < sizeof(hpModules) / sizeof(hpModules[0]); j++)
+                {
+                    CHAR16 hpModuleW[50];
+                    UnicodeSPrint(hpModuleW, sizeof(hpModuleW), L"%a", hpModules[j]);
+                    if (StrStr(String, hpModuleW) != NULL)
+                    {
+                        hpBiosDetected = TRUE;
+                        AsciiSPrint(Log,512,"  [HP Module] %s at 0x%X\n\r", String, LoadedImageProtocol->ImageBase);
+                        LogToFile(LogFile,Log);
+                    }
+                }
+            }
+        }
+    }
+    
+    if (hpBiosDetected)
+    {
+        AsciiSPrint(Log,512,"%a","\n*** HP CUSTOM BIOS DETECTED ***\n\r");
+        LogToFile(LogFile,Log);
+        AsciiSPrint(Log,512,"%a","This appears to be an HP-customized AMI BIOS.\n\r");
+        LogToFile(LogFile,Log);
+        AsciiSPrint(Log,512,"%a","Using HP-specific configuration is recommended.\n\r");
+        LogToFile(LogFile,Log);
+    }
+    else
+    {
+        AsciiSPrint(Log,512,"%a","No HP-specific modules detected - using standard AMI configuration.\n\r");
+        LogToFile(LogFile,Log);
+    }
+    
+    AsciiSPrint(Log,512,"%a","=== End of HP Detection ===\n\n\r");
+    LogToFile(LogFile,Log);
+    
+    FreePool(Handles);
 }
 
 EFI_STATUS EFIAPI SREPEntry(IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *SystemTable)
