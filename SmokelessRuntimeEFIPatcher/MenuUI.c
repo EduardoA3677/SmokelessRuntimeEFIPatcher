@@ -290,6 +290,9 @@ STATIC VOID MenuDrawTabs(MENU_CONTEXT *Context)
     
     EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *ConOut = Context->TextOut;
     
+    if (ConOut == NULL)
+        return;
+    
     // Draw tab bar on line 1 (below title)
     ConOut->SetCursorPosition(ConOut, 0, 1);
     
@@ -297,6 +300,10 @@ STATIC VOID MenuDrawTabs(MENU_CONTEXT *Context)
     for (UINTN i = 0; i < Context->TabCount; i++)
     {
         MENU_TAB *Tab = &Context->Tabs[i];
+        
+        // NULL safety check for tab and tab name
+        if (Tab == NULL || Tab->Name == NULL)
+            continue;
         
         // Set color based on active/inactive state
         if (i == Context->CurrentTabIndex)
@@ -321,6 +328,10 @@ STATIC VOID MenuDrawTabs(MENU_CONTEXT *Context)
         
         // Move to next tab position
         Col += StrLen(Tab->Name) + 3;
+        
+        // Don't overflow screen width
+        if (Col >= Context->ScreenWidth - 10)
+            break;
     }
     
     // Fill rest of line with normal color
@@ -329,6 +340,14 @@ STATIC VOID MenuDrawTabs(MENU_CONTEXT *Context)
     {
         ConOut->SetCursorPosition(ConOut, Col, 1);
         ConOut->OutputString(ConOut, L" ");
+    }
+    
+    // Draw a separator line below tabs for BIOS-like appearance
+    ConOut->SetCursorPosition(ConOut, 0, 2);
+    ConOut->SetAttribute(ConOut, Context->Colors.DisabledColor);
+    for (UINTN i = 0; i < Context->ScreenWidth; i++)
+    {
+        ConOut->OutputString(ConOut, L"─");
     }
 }
 
@@ -343,6 +362,9 @@ VOID MenuDraw(MENU_CONTEXT *Context)
     MENU_PAGE *Page = Context->CurrentPage;
     EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *ConOut = Context->TextOut;
     
+    if (ConOut == NULL)
+        return;
+    
     // Clear screen
     ConOut->ClearScreen(ConOut);
     ConOut->SetAttribute(ConOut, Context->Colors.BackgroundColor);
@@ -351,27 +373,33 @@ VOID MenuDraw(MENU_CONTEXT *Context)
     ConOut->SetCursorPosition(ConOut, 0, 0);
     ConOut->SetAttribute(ConOut, Context->Colors.TitleColor);
     
-    // Center the title
-    UINTN TitleLen = StrLen(Page->Title);
+    // Center the title - with NULL check
+    CHAR16 *TitleToShow = Page->Title ? Page->Title : L"BIOS Setup";
+    UINTN TitleLen = StrLen(TitleToShow);
     UINTN Padding = (Context->ScreenWidth - TitleLen) / 2;
     
     for (UINTN i = 0; i < Context->ScreenWidth; i++)
         ConOut->OutputString(ConOut, L" ");
     
     ConOut->SetCursorPosition(ConOut, Padding, 0);
-    ConOut->OutputString(ConOut, Page->Title);
+    ConOut->OutputString(ConOut, TitleToShow);
     
-    // Draw tab bar if enabled
-    if (Context->UseTabMode)
+    // Always draw tab bar if tab mode is enabled (even in submenus)
+    // This keeps the BIOS-like interface consistent
+    if (Context->UseTabMode && Context->Tabs != NULL)
     {
         MenuDrawTabs(Context);
     }
     
-    // Draw menu items (start at row 3 if tabs enabled, row 2 otherwise)
-    UINTN Row = Context->UseTabMode ? 3 : 2;
+    // Draw menu items (start at row 4 if tabs enabled due to separator, row 2 otherwise)
+    UINTN Row = Context->UseTabMode ? 4 : 2;
     for (UINTN i = 0; i < Page->ItemCount; i++)
     {
         MENU_ITEM *Item = &Page->Items[i];
+        
+        // Safety check
+        if (Item == NULL)
+            continue;
         
         ConOut->SetCursorPosition(ConOut, 2, Row);
         
@@ -394,12 +422,12 @@ VOID MenuDraw(MENU_CONTEXT *Context)
         else
             ConOut->OutputString(ConOut, L"  ");
         
-        // Draw item title
+        // Draw item title with NULL check
         if (Item->Type == MENU_ITEM_SEPARATOR)
         {
             ConOut->SetAttribute(ConOut, Context->Colors.DisabledColor);
             ConOut->OutputString(ConOut, L"---");
-            if (Item->Title)
+            if (Item->Title != NULL)
             {
                 ConOut->OutputString(ConOut, L" ");
                 ConOut->OutputString(ConOut, Item->Title);
@@ -409,12 +437,22 @@ VOID MenuDraw(MENU_CONTEXT *Context)
         }
         else if (Item->Type == MENU_ITEM_SUBMENU)
         {
-            ConOut->OutputString(ConOut, Item->Title);
-            ConOut->OutputString(ConOut, L" >");
+            if (Item->Title != NULL)
+            {
+                ConOut->OutputString(ConOut, Item->Title);
+                ConOut->OutputString(ConOut, L" >");
+            }
+            else
+            {
+                ConOut->OutputString(ConOut, L"[Submenu] >");
+            }
         }
         else
         {
-            ConOut->OutputString(ConOut, Item->Title);
+            if (Item->Title != NULL)
+                ConOut->OutputString(ConOut, Item->Title);
+            else
+                ConOut->OutputString(ConOut, L"[Item]");
         }
         
         Row++;
@@ -437,11 +475,11 @@ VOID MenuDraw(MENU_CONTEXT *Context)
         ConOut->OutputString(ConOut, L"Use Arrow Keys to navigate | Enter to select | ESC to go back");
     }
     
-    // Draw description of selected item
+    // Draw description of selected item with NULL checks
     if (Page->SelectedIndex < Page->ItemCount)
     {
         MENU_ITEM *SelectedItem = &Page->Items[Page->SelectedIndex];
-        if (SelectedItem->Description)
+        if (SelectedItem != NULL && SelectedItem->Description != NULL)
         {
             ConOut->SetCursorPosition(ConOut, 0, Context->ScreenHeight - 1);
             ConOut->SetAttribute(ConOut, Context->Colors.DescriptionColor);
@@ -562,14 +600,14 @@ EFI_STATUS MenuHandleInput(MENU_CONTEXT *Context, EFI_INPUT_KEY *Key)
         
         MENU_ITEM *Item = &Page->Items[Page->SelectedIndex];
         
-        if (!Item->Enabled)
+        if (Item == NULL || !Item->Enabled)
             return EFI_SUCCESS;
         
-        if (Item->Type == MENU_ITEM_SUBMENU && Item->Submenu)
+        if (Item->Type == MENU_ITEM_SUBMENU && Item->Submenu != NULL)
         {
             return MenuNavigateTo(Context, Item->Submenu);
         }
-        else if (Item->Type == MENU_ITEM_ACTION && Item->Callback)
+        else if (Item->Type == MENU_ITEM_ACTION && Item->Callback != NULL)
         {
             return Item->Callback(Item, Context);
         }
@@ -658,14 +696,31 @@ EFI_STATUS MenuGoBack(MENU_CONTEXT *Context)
     if (Context == NULL)
         return EFI_INVALID_PARAMETER;
     
-    if (Context->CurrentPage == Context->RootPage)
+    // In tab mode with submenus open
+    if (Context->UseTabMode && Context->CurrentPage != NULL && Context->CurrentPage->Parent != NULL)
+    {
+        // If current page has a parent, go back to it
+        Context->CurrentPage = Context->CurrentPage->Parent;
+        
+        // Ensure we select a valid enabled item
+        if (Context->CurrentPage->ItemCount > 0)
+        {
+            Context->CurrentPage->SelectedIndex = FindFirstEnabledItem(Context->CurrentPage);
+        }
+        
+        MenuDraw(Context);
+        return EFI_SUCCESS;
+    }
+    
+    // In non-tab mode or at root level
+    if (Context->CurrentPage == Context->RootPage || Context->CurrentPage->Parent == NULL)
     {
         // At root level, exit menu system
         Context->Running = FALSE;
         return EFI_SUCCESS;
     }
     
-    if (Context->CurrentPage->Parent)
+    if (Context->CurrentPage->Parent != NULL)
     {
         Context->CurrentPage = Context->CurrentPage->Parent;
         
