@@ -51,8 +51,8 @@
   gEfiHiiDatabaseProtocolGuid                   ## CONSUMES
   gEfiHiiConfigRoutingProtocolGuid              ## CONSUMES
   gEfiFormBrowser2ProtocolGuid                  ## CONSUMES
-  gEfiSimpleTextInputProtocolGuid               ## CONSUMES
-  gEfiSimpleTextOutputProtocolGuid              ## CONSUMES
+  gEfiSimpleTextInProtocolGuid                  ## CONSUMES
+  gEfiSimpleTextOutProtocolGuid                 ## CONSUMES
 [Guids]
   gEfiAcpiTableGuid
   gEfiAcpi20TableGuid
