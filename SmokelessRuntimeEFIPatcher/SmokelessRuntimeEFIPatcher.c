@@ -25,6 +25,7 @@
 #include "MenuUI.h"
 #include "HiiBrowser.h"
 #include "ConfigManager.h"
+#include "NvramManager.h"
 #define SREP_VERSION L"0.3.1"
 
 EFI_BOOT_SERVICES *_gBS = NULL;
@@ -158,6 +159,8 @@ VOID PrintDump(UINT16 Size, UINT8 *DUMP)
 typedef struct {
     EFI_HANDLE ImageHandle;
     BIOS_INFO BiosInfo;
+    MENU_CONTEXT *MenuContext;
+    NVRAM_MANAGER *NvramManager;
 } SREP_CONTEXT;
 
 /**
@@ -418,3 +421,228 @@ EFI_STATUS MenuCallback_Exit(MENU_ITEM *Item, VOID *Context)
 /**
  * Initialize main menu
  */
+EFI_STATUS CreateMainMenu(SREP_CONTEXT *SrepCtx, MENU_PAGE **OutMenu)
+{
+    MENU_PAGE *MainMenu;
+    
+    // Create main menu page
+    MainMenu = AllocateZeroPool(sizeof(MENU_PAGE));
+    if (MainMenu == NULL) {
+        return EFI_OUT_OF_RESOURCES;
+    }
+    
+    MainMenu->Title = L"SREP - SmokelessRuntimeEFIPatcher v0.3.1";
+    MainMenu->Description = L"Enhanced BIOS Configuration Tool with NVRAM Support";
+    MainMenu->ItemCount = 0;
+    MainMenu->MaxItems = 20;
+    MainMenu->Items = AllocateZeroPool(sizeof(MENU_ITEM) * MainMenu->MaxItems);
+    
+    if (MainMenu->Items == NULL) {
+        FreePool(MainMenu);
+        return EFI_OUT_OF_RESOURCES;
+    }
+    
+    // Menu items
+    MenuAddActionItem(
+        MainMenu, 0,
+        L"Auto-Detect and Patch BIOS",
+        L"Automatically detect BIOS type and apply patches",
+        MenuCallback_AutoPatch,
+        SrepCtx
+    );
+    
+    MenuAddActionItem(
+        MainMenu, 1,
+        L"Browse BIOS Settings (Read-Only)",
+        L"View available BIOS forms and settings",
+        MenuCallback_BrowseSettings,
+        SrepCtx->MenuContext
+    );
+    
+    MenuAddActionItem(
+        MainMenu, 2,
+        L"Load Modules and Edit Settings",
+        L"Load BIOS modules, modify settings, save to NVRAM",
+        MenuCallback_LoadAndEdit,
+        SrepCtx
+    );
+    
+    MenuAddSeparator(MainMenu, 3, NULL);
+    
+    MenuAddActionItem(
+        MainMenu, 4,
+        L"Launch BIOS Setup Browser",
+        L"Launch the native BIOS Setup interface",
+        MenuCallback_LaunchSetup,
+        SrepCtx->MenuContext
+    );
+    
+    MenuAddActionItem(
+        MainMenu, 5,
+        L"About",
+        L"About SmokelessRuntimeEFIPatcher",
+        MenuCallback_About,
+        SrepCtx
+    );
+    
+    MenuAddSeparator(MainMenu, 6, NULL);
+    
+    MenuAddInfoItem(MainMenu, 7, L"All changes are saved directly to BIOS NVRAM");
+    MenuAddInfoItem(MainMenu, 8, L"Settings persist across reboots (stored in real BIOS NVRAM)");
+    
+    MenuAddSeparator(MainMenu, 9, NULL);
+    
+    MenuAddActionItem(
+        MainMenu, 10,
+        L"Exit",
+        L"Exit to UEFI Shell or Boot Menu",
+        MenuCallback_Exit,
+        SrepCtx
+    );
+    
+    *OutMenu = MainMenu;
+    return EFI_SUCCESS;
+}
+
+/**
+ * Main entry point
+ */
+EFI_STATUS EFIAPI SREPEntry(IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *SystemTable)
+{
+    EFI_STATUS Status;
+    EFI_HANDLE_PROTOCOL HandleProtocol;
+    EFI_LOADED_IMAGE_PROTOCOL *LoadedImage;
+    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *FileSystem;
+    EFI_FILE *Root;
+    BOOLEAN UseInteractiveMode = TRUE;
+    SREP_CONTEXT SrepCtx;
+    MENU_CONTEXT MenuCtx;
+    
+    Print(L"Welcome to SREP (Smokeless Runtime EFI Patcher) %s\n\r", SREP_VERSION);
+    Print(L"Enhanced with Auto-Detection and Intelligent Patching\n\r");
+    
+    gBS->SetWatchdogTimer(0, 0, 0, 0);
+    HandleProtocol = SystemTable->BootServices->HandleProtocol;
+    HandleProtocol(ImageHandle, &gEfiLoadedImageProtocolGuid, (void **)&LoadedImage);
+    HandleProtocol(LoadedImage->DeviceHandle, &gEfiSimpleFileSystemProtocolGuid, (void **)&FileSystem);
+    FileSystem->OpenVolume(FileSystem, &Root);
+
+    Status = Root->Open(Root, &LogFile, L"SREP.log", EFI_FILE_MODE_WRITE | EFI_FILE_MODE_READ | EFI_FILE_MODE_CREATE, 0);
+    if (Status != EFI_SUCCESS)
+    {
+        Print(L"Failed on Opening Log File : %r\n\r", Status);
+        return Status;
+    }
+    AsciiSPrint(Log,512,"Welcome to SREP (Smokeless Runtime EFI Patcher) %s\n\r", SREP_VERSION);
+    LogToFile(LogFile,Log);
+    AsciiSPrint(Log,512,"Enhanced with Auto-Detection and Intelligent Patching\n\r");
+    LogToFile(LogFile,Log);
+    
+    // Check for interactive mode flag file
+    EFI_FILE *InteractiveFlag;
+    Status = Root->Open(Root, &InteractiveFlag, L"SREP_Interactive.flag", EFI_FILE_MODE_READ, 0);
+    if (!EFI_ERROR(Status))
+    {
+        InteractiveFlag->Close(InteractiveFlag);
+        UseInteractiveMode = TRUE;
+        AsciiSPrint(Log,512,"Interactive mode flag found\n\r");
+        LogToFile(LogFile,Log);
+    }
+    
+    // Check for auto mode flag
+    EFI_FILE *AutoFlag;
+    Status = Root->Open(Root, &AutoFlag, L"SREP_Auto.flag", EFI_FILE_MODE_READ, 0);
+    if (!EFI_ERROR(Status))
+    {
+        AutoFlag->Close(AutoFlag);
+        UseInteractiveMode = FALSE;
+        AsciiSPrint(Log,512,"Auto mode flag found, skipping interactive menu\n\r");
+        LogToFile(LogFile,Log);
+    }
+    else
+    {
+        // Default to interactive mode
+        UseInteractiveMode = TRUE;
+    }
+    
+    // INTERACTIVE MODE: Show menu interface
+    if (UseInteractiveMode)
+    {
+        AsciiSPrint(Log,512,"\n=== INTERACTIVE MODE: Starting Menu ===\n\r");
+        LogToFile(LogFile,Log);
+        
+        // Initialize menu system
+        Status = MenuInitialize(&MenuCtx);
+        if (EFI_ERROR(Status))
+        {
+            Print(L"Failed to initialize menu system: %r\n\r", Status);
+            LogFile->Close(LogFile);
+            return Status;
+        }
+        
+        // Initialize SREP context
+        ZeroMem(&SrepCtx, sizeof(SREP_CONTEXT));
+        SrepCtx.ImageHandle = ImageHandle;
+        SrepCtx.MenuContext = &MenuCtx;
+        SrepCtx.NvramManager = NULL;
+        
+        // Create main menu
+        MENU_PAGE *MainMenu;
+        Status = CreateMainMenu(&SrepCtx, &MainMenu);
+        if (EFI_ERROR(Status))
+        {
+            Print(L"Failed to create main menu: %r\n\r", Status);
+            LogFile->Close(LogFile);
+            return Status;
+        }
+        
+        // Run menu loop
+        Status = MenuRun(&MenuCtx, MainMenu);
+        
+        // Cleanup
+        MenuFreePage(MainMenu);
+        MenuCleanup(&MenuCtx);
+        
+        LogFile->Close(LogFile);
+        return Status;
+    }
+    
+    // AUTO MODE: Detect and patch automatically
+    AsciiSPrint(Log,512,"\n=== AUTO MODE: Detecting BIOS Type ===\n\r");
+    LogToFile(LogFile,Log);
+    
+    // Initialize SREP context
+    ZeroMem(&SrepCtx, sizeof(SREP_CONTEXT));
+    SrepCtx.ImageHandle = ImageHandle;
+    
+    // Detect BIOS type
+    Status = DetectBiosType(&SrepCtx.BiosInfo);
+    if (EFI_ERROR(Status))
+    {
+        AsciiSPrint(Log,512,"BIOS detection failed: %r\n\r", Status);
+        LogToFile(LogFile,Log);
+        Print(L"BIOS detection failed: %r\n\r", Status);
+        Print(L"Press any key to exit...\n\r");
+        WaitForKey();
+        LogFile->Close(LogFile);
+        return Status;
+    }
+    
+    Print(L"\nDetected BIOS: %s\n\r", GetBiosTypeString(SrepCtx.BiosInfo.Type));
+    Print(L"Vendor: %s\n\r", SrepCtx.BiosInfo.VendorName);
+    Print(L"Version: %s\n\r", SrepCtx.BiosInfo.Version);
+    Print(L"\nStarting automatic patching...\n\r");
+    
+    // Auto-patch based on detected BIOS
+    Status = AutoPatchBios(ImageHandle, &SrepCtx.BiosInfo);
+    
+    if (EFI_ERROR(Status))
+    {
+        AsciiSPrint(Log,512,"Auto-patching failed: %r\n\r", Status);
+        LogToFile(LogFile,Log);
+        Print(L"Auto-patching failed: %r\n\r", Status);
+    }
+    
+    LogFile->Close(LogFile);
+    return Status;
+}
