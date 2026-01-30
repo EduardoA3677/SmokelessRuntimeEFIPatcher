@@ -403,6 +403,13 @@ VOID MenuDraw(MENU_CONTEXT *Context)
         if (Item == NULL)
             continue;
         
+        // Clear entire line first with background color to prevent color bleeding
+        ConOut->SetAttribute(ConOut, Context->Colors.BackgroundColor);
+        ConOut->SetCursorPosition(ConOut, 0, Row);
+        for (UINTN Col = 0; Col < Context->ScreenWidth; Col++)
+            ConOut->OutputString(ConOut, L" ");
+        
+        // Now draw the item
         ConOut->SetCursorPosition(ConOut, 2, Row);
         
         // Choose color based on item state
@@ -413,29 +420,39 @@ VOID MenuDraw(MENU_CONTEXT *Context)
             Color = Context->Colors.SelectedColor;
         else if (Item->Hidden)
             Color = Context->Colors.HiddenColor;
+        else if (Item->Type == MENU_ITEM_INFO)
+            Color = Context->Colors.DisabledColor;  // Info items in gray
         else
             Color = Context->Colors.NormalColor;
         
         ConOut->SetAttribute(ConOut, Color);
         
-        // Draw selection indicator
-        if (i == Page->SelectedIndex && Item->Enabled)
-            ConOut->OutputString(ConOut, L"> ");
+        // Draw selection indicator (not for INFO items)
+        if (Item->Type != MENU_ITEM_INFO)
+        {
+            if (i == Page->SelectedIndex && Item->Enabled)
+                ConOut->OutputString(ConOut, L"> ");
+            else
+                ConOut->OutputString(ConOut, L"  ");
+        }
         else
+        {
+            // INFO items have no selector, just indent
             ConOut->OutputString(ConOut, L"  ");
+        }
         
         // Draw item title with NULL check
         if (Item->Type == MENU_ITEM_SEPARATOR)
         {
             ConOut->SetAttribute(ConOut, Context->Colors.DisabledColor);
-            ConOut->OutputString(ConOut, L"---");
+            ConOut->OutputString(ConOut, L"─────");
             if (Item->Title != NULL)
             {
                 ConOut->OutputString(ConOut, L" ");
                 ConOut->OutputString(ConOut, Item->Title);
                 ConOut->OutputString(ConOut, L" ");
             }
-            ConOut->OutputString(ConOut, L"---");
+            ConOut->OutputString(ConOut, L"─────");
         }
         else if (Item->Type == MENU_ITEM_SUBMENU)
         {
@@ -449,6 +466,12 @@ VOID MenuDraw(MENU_CONTEXT *Context)
                 ConOut->OutputString(ConOut, L"[Submenu] >");
             }
         }
+        else if (Item->Type == MENU_ITEM_INFO)
+        {
+            // Info items are just displayed, not selectable
+            if (Item->Title != NULL)
+                ConOut->OutputString(ConOut, Item->Title);
+        }
         else
         {
             if (Item->Title != NULL)
@@ -457,11 +480,23 @@ VOID MenuDraw(MENU_CONTEXT *Context)
                 ConOut->OutputString(ConOut, L"[Item]");
         }
         
+        // Reset to background color after each item to prevent bleeding
+        ConOut->SetAttribute(ConOut, Context->Colors.BackgroundColor);
+        
         Row++;
         
         // Don't exceed screen height
         if (Row >= Context->ScreenHeight - 3)
             break;
+    }
+    
+    // Fill remaining lines with background color to ensure consistency
+    ConOut->SetAttribute(ConOut, Context->Colors.BackgroundColor);
+    for (; Row < Context->ScreenHeight - 2; Row++)
+    {
+        ConOut->SetCursorPosition(ConOut, 0, Row);
+        for (UINTN Col = 0; Col < Context->ScreenWidth; Col++)
+            ConOut->OutputString(ConOut, L" ");
     }
     
     // Draw AMI BIOS-style status bar at bottom
