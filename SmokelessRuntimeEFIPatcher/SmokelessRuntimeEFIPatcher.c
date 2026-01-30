@@ -433,8 +433,9 @@ EFI_STATUS CreateMainMenu(SREP_CONTEXT *SrepCtx, MENU_PAGE **OutMenu)
     
     MainMenu->Title = L"SREP - SmokelessRuntimeEFIPatcher v0.3.1";
     MainMenu->Description = L"Enhanced BIOS Configuration Tool with NVRAM Support";
-    MainMenu->ItemCount = 0;
     MainMenu->MaxItems = 20;
+    MainMenu->ItemCount = 11;  // Set to actual number of items
+    MainMenu->SelectedIndex = 0;
     MainMenu->Items = AllocateZeroPool(sizeof(MENU_ITEM) * MainMenu->MaxItems);
     
     if (MainMenu->Items == NULL) {
@@ -531,6 +532,7 @@ EFI_STATUS EFIAPI SREPEntry(IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *Syst
     if (Status != EFI_SUCCESS)
     {
         Print(L"Failed on Opening Log File : %r\n\r", Status);
+        Root->Close(Root);
         return Status;
     }
     AsciiSPrint(Log,512,"Welcome to SREP (Smokeless Runtime EFI Patcher) %s\n\r", SREP_VERSION);
@@ -577,6 +579,7 @@ EFI_STATUS EFIAPI SREPEntry(IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *Syst
         {
             Print(L"Failed to initialize menu system: %r\n\r", Status);
             LogFile->Close(LogFile);
+            Root->Close(Root);
             return Status;
         }
         
@@ -593,6 +596,7 @@ EFI_STATUS EFIAPI SREPEntry(IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *Syst
         {
             Print(L"Failed to create main menu: %r\n\r", Status);
             LogFile->Close(LogFile);
+            Root->Close(Root);
             return Status;
         }
         
@@ -604,6 +608,7 @@ EFI_STATUS EFIAPI SREPEntry(IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *Syst
         MenuCleanup(&MenuCtx);
         
         LogFile->Close(LogFile);
+        Root->Close(Root);
         return Status;
     }
     
@@ -625,6 +630,7 @@ EFI_STATUS EFIAPI SREPEntry(IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *Syst
         Print(L"Press any key to exit...\n\r");
         WaitForKey();
         LogFile->Close(LogFile);
+        Root->Close(Root);
         return Status;
     }
     
@@ -644,5 +650,6 @@ EFI_STATUS EFIAPI SREPEntry(IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *Syst
     }
     
     LogFile->Close(LogFile);
+    Root->Close(Root);
     return Status;
 }
