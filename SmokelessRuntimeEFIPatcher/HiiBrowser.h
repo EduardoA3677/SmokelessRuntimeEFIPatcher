@@ -1,7 +1,13 @@
 #pragma once
 #include <Uefi.h>
 #include <Library/UefiLib.h>
+#include <Library/UefiBootServicesTableLib.h>
+#include <Library/UefiRuntimeServicesTableLib.h>
+#include <Library/MemoryAllocationLib.h>
+#include <Library/BaseMemoryLib.h>
+#include <Library/PrintLib.h>
 #include <Protocol/HiiDatabase.h>
+#include <Protocol/HiiConfigRouting.h>
 #include <Protocol/HiiConfigAccess.h>
 #include <Protocol/FormBrowser2.h>
 #include "MenuUI.h"

@@ -1,4 +1,14 @@
 #include "HiiBrowser.h"
+#include <Library/DebugLib.h>
+#include <Library/UefiBootServicesTableLib.h>
+#include <Library/UefiRuntimeServicesTableLib.h>
+#include <Protocol/SimpleTextIn.h>
+#include <Protocol/SimpleTextOut.h>
+
+// External globals from UEFI
+extern EFI_BOOT_SERVICES         *gBS;
+extern EFI_SYSTEM_TABLE          *gST;
+extern EFI_RUNTIME_SERVICES      *gRT;
 #include <Library/BaseMemoryLib.h>
 #include <Library/MemoryAllocationLib.h>
 #include <Library/PrintLib.h>
