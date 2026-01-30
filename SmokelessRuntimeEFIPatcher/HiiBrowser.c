@@ -1100,53 +1100,71 @@ VOID HiiBrowserCleanup(HII_BROWSER_CONTEXT *Context)
 
 /**
  * Helper: Categorize form into tab based on title keywords
+ * 
+ * Analyzes form title and assigns it to appropriate tab category
+ * based on keyword matching. Case-insensitive comparison.
+ * 
+ * @param Title  Form title to categorize (NULL safe)
+ * @return       Tab index (0=Main, 1=Advanced, 2=Power, 3=Boot, 4=Security, 5=Save&Exit)
  */
 STATIC UINTN CategorizeForm(CHAR16 *Title)
 {
     if (Title == NULL)
-        return 0;  // Main by default
+        return TAB_INDEX_MAIN;  // Main by default
     
-    // Convert to uppercase for comparison
+    // Convert to uppercase for case-insensitive keyword matching
     CHAR16 Upper[MAX_TITLE_LENGTH];
-    UINTN Len = StrLen(Title);
+    UINTN TitleLen = StrLen(Title);
+    UINTN CopyLen = (TitleLen < MAX_TITLE_LENGTH - 1) ? TitleLen : (MAX_TITLE_LENGTH - 1);
     
-    // Cap length to prevent buffer overflow
-    if (Len >= MAX_TITLE_LENGTH) 
-        Len = MAX_TITLE_LENGTH - 1;
-    
-    for (UINTN i = 0; i < Len; i++)
+    // Safe character-by-character copy with uppercase conversion
+    for (UINTN i = 0; i < CopyLen; i++)
     {
         if (Title[i] >= L'a' && Title[i] <= L'z')
-            Upper[i] = Title[i] - 32;
+            Upper[i] = Title[i] - 32;  // Convert to uppercase
         else
             Upper[i] = Title[i];
     }
-    Upper[Len] = 0;  // Null terminate within bounds
+    Upper[CopyLen] = L'\0';  // Null terminate (CopyLen is always < MAX_TITLE_LENGTH)
     
-    // Check for keywords
-    if (StrStr(Upper, L"MAIN") != NULL || StrStr(Upper, L"SYSTEM") != NULL || 
-        StrStr(Upper, L"INFO") != NULL)
-        return 0;  // Main tab
+    // Check for Main tab keywords
+    if (StrStr(Upper, KEYWORD_MAIN) != NULL || 
+        StrStr(Upper, KEYWORD_SYSTEM) != NULL || 
+        StrStr(Upper, KEYWORD_INFO) != NULL)
+        return TAB_INDEX_MAIN;
     
-    if (StrStr(Upper, L"ADVANCED") != NULL || StrStr(Upper, L"CPU") != NULL || 
-        StrStr(Upper, L"CHIPSET") != NULL || StrStr(Upper, L"PERIPHERAL") != NULL)
-        return 1;  // Advanced tab
+    // Check for Advanced tab keywords
+    if (StrStr(Upper, KEYWORD_ADVANCED) != NULL || 
+        StrStr(Upper, KEYWORD_CPU) != NULL || 
+        StrStr(Upper, KEYWORD_CHIPSET) != NULL || 
+        StrStr(Upper, KEYWORD_PERIPHERAL) != NULL)
+        return TAB_INDEX_ADVANCED;
     
-    if (StrStr(Upper, L"POWER") != NULL || StrStr(Upper, L"ACPI") != NULL || 
-        StrStr(Upper, L"THERMAL") != NULL)
-        return 2;  // Power tab
+    // Check for Power tab keywords
+    if (StrStr(Upper, KEYWORD_POWER) != NULL || 
+        StrStr(Upper, KEYWORD_ACPI) != NULL || 
+        StrStr(Upper, KEYWORD_THERMAL) != NULL)
+        return TAB_INDEX_POWER;
     
-    if (StrStr(Upper, L"BOOT") != NULL || StrStr(Upper, L"STARTUP") != NULL)
-        return 3;  // Boot tab
+    // Check for Boot tab keywords
+    if (StrStr(Upper, KEYWORD_BOOT) != NULL || 
+        StrStr(Upper, KEYWORD_STARTUP) != NULL)
+        return TAB_INDEX_BOOT;
     
-    if (StrStr(Upper, L"SECURITY") != NULL || StrStr(Upper, L"PASSWORD") != NULL || 
-        StrStr(Upper, L"TPM") != NULL || StrStr(Upper, L"SECURE") != NULL)
-        return 4;  // Security tab
+    // Check for Security tab keywords
+    if (StrStr(Upper, KEYWORD_SECURITY) != NULL || 
+        StrStr(Upper, KEYWORD_PASSWORD) != NULL || 
+        StrStr(Upper, KEYWORD_TPM) != NULL || 
+        StrStr(Upper, KEYWORD_SECURE) != NULL)
+        return TAB_INDEX_SECURITY;
     
-    if (StrStr(Upper, L"EXIT") != NULL || StrStr(Upper, L"SAVE") != NULL)
-        return 5;  // Save & Exit tab
+    // Check for Save & Exit tab keywords
+    if (StrStr(Upper, KEYWORD_EXIT) != NULL || 
+        StrStr(Upper, KEYWORD_SAVE) != NULL)
+        return TAB_INDEX_SAVE_EXIT;
     
-    return 0;  // Default to Main
+    // Default to Main tab if no keywords matched
+    return TAB_INDEX_MAIN;
 }
 
 /**
