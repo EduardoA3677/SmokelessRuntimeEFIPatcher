@@ -15,16 +15,57 @@ This is not a request form.
 As the original creator/maintainer is gone, do not request new features. Feel free to open a pull request if you would like to submit a new feature. If you find any bugs feel free to open an issue or submit a pull request, if I have time I may fix it.
 
 ### What?
-This is a simple tool to patch and inject EFI modules at runtime, SmokelessCPUv2 developed this as they weren't confortable with SPI flashing, and requires opening the laptop for every small change, and with secure boot you can no longer flash unsigned BIOSes.
+This is a tool to patch and inject EFI modules at runtime. SmokelessCPUv2 developed this as they weren't comfortable with SPI flashing, which requires opening the laptop for every small change. With secure boot, you can no longer flash unsigned BIOSes.
+
+**Version 0.2.0 adds intelligent auto-detection and patching** - it can now automatically detect your BIOS type and patch hidden menus without requiring a config file!
 
 ### Why?
-The tool was developed as a way to unlock a BIOS without the risks/issues/annoyances associated with SPI flashing. Additionally with the usage of secure boot it is no longer possible (in most cases) to get the BIOS to flash itself with a unsigned BIOS.
+The tool was developed as a way to unlock a BIOS without the risks/issues/annoyances associated with SPI flashing. Additionally with the usage of secure boot it is no longer possible (in most cases) to get the BIOS to flash itself with an unsigned BIOS.
+
+## Operating Modes
+
+### AUTO Mode (New in v0.2.0) - Recommended
+
+When no config file is present, SREP operates in **AUTO mode** and automatically:
+
+1. **Detects BIOS Type** via SMBIOS:
+   - AMI BIOS
+   - AMI customized by OEMs (HP, Dell, etc.)
+   - Insyde H2O
+   - Phoenix BIOS
+   
+2. **Finds BIOS Modules**:
+   - Automatically locates Setup and FormBrowser modules
+   - Searches firmware volumes for the correct module names
+   
+3. **Intelligent Patching**:
+   - Parses IFR (Internal Forms Representation) opcodes
+   - Identifies and patches conditions that hide menus:
+     - `suppressif` conditions
+     - `grayoutif` conditions  
+     - `disableif` conditions
+   - Disables write protection checks
+   - Patches security restrictions
+   
+4. **Launches Setup Browser**:
+   - Automatically loads and executes the appropriate Setup application
+   - Works with AMI Setup, Insyde SetupUtilityApp, and others
+
+**Usage (AUTO mode)**:
+```bash
+# Simply boot the EFI file without any config file
+# SREP will automatically detect and patch your BIOS
+```
+
+### MANUAL Mode - Config File (Legacy)
+
+For advanced users or specific patches, SREP still supports manual configuration files.
 
 ### How?
-When the EFI App is booted up, it looks for a file Called *SREP_Config.cfg* in the root of the drive it booted from, containing a list of command to execute.
+When the EFI App is booted up, it looks for a file called *SREP_Config.cfg* in the root of the drive it booted from. If found, it operates in MANUAL mode. If not found, it operates in AUTO mode.
 
-### Usage
-A file with the name ```SREP_Config.cfg``` must be located at the root of the drive the EFI boots from. You can either create your own config or use one of the many created by the community.
+### Usage (MANUAL mode)
+A file with the name ```SREP_Config.cfg``` can be located at the root of the drive the EFI boots from. You can either create your own config or use one of the many created by the community.
 
 Some configs can be found here: [Maxinator500's SREP-Patches](https://github.com/Maxinator500/SREP-Patches)
 
@@ -218,3 +259,100 @@ You could do the same to show the PBS menu and the Advanced Menu on intel one, i
     Op LoadFromFV
     SetupUtilityApp
     Op Exec
+
+## Technical Details - AUTO Mode
+
+### BIOS Detection
+SREP uses SMBIOS Type 0 (BIOS Information) to identify the BIOS vendor and version:
+- Reads BIOS vendor string from SMBIOS
+- Detects AMI, Insyde, Phoenix, and OEM-customized variants
+- Searches firmware volumes for Setup-related modules
+
+### IFR Parsing
+The IFR (Internal Forms Representation) parser analyzes the Setup module's binary data:
+- Identifies IFR opcodes that control form visibility
+- Detects `EFI_IFR_SUPPRESS_IF_OP` (0x0A) - hides menu items
+- Detects `EFI_IFR_GRAY_OUT_IF_OP` (0x19) - grays out menu items
+- Detects `EFI_IFR_DISABLE_IF_OP` (0x1E) - disables menu items
+
+### Patching Strategy
+1. **IFR Condition Patching**: Replaces condition opcodes with `EFI_IFR_FALSE_OP` to ensure hidden items are always shown
+2. **AMI-Specific**: Patches `SuppressIf(TRUE)` patterns commonly used in AMI BIOS
+3. **Insyde-Specific**: Patches form visibility flags (GUID + uint32_t structures)
+4. **Write Protection**: Disables common security checks by patching conditional jumps
+
+### Supported BIOS Types
+- **AMI BIOS**: Full support for standard AMI and OEM-customized versions (HP, Dell, Asus, etc.)
+- **Insyde H2O**: Full support including Lenovo-style form structures
+- **Phoenix BIOS**: Basic support
+- **Unknown**: Falls back to generic patching strategies
+
+### Module Auto-Detection
+SREP automatically searches for:
+- Setup modules: `Setup`, `SetupUtilityApp`, `SetupUtility`
+- FormBrowser modules: `FormBrowser`, `H2OFormBrowserDxe`, `SetupBrowser`
+
+### Logging
+All operations are logged to `SREP.log` on the boot drive for debugging and verification.
+
+## Building from Source
+
+Requirements:
+- EDK2 (UEFI Development Kit)
+- GCC5 toolchain
+- NASM assembler
+- Python 3
+
+```bash
+# Clone EDK2
+git clone --depth 1 --branch edk2-stable202205 https://github.com/tianocore/edk2.git
+cd edk2
+git submodule update --init --recursive
+
+# Build BaseTools
+make -C BaseTools
+
+# Setup environment
+source edksetup.sh
+
+# Copy SREP files to EDK2 workspace
+cp -r /path/to/SmokelessRuntimeEFIPatcher .
+cp SmokelessRuntimeEFIPatcher.dsc .
+
+# Build
+build -b RELEASE -t GCC5 -p SmokelessRuntimeEFIPatcher.dsc -a X64 -s
+
+# Output: Build/SmokelessRuntimeEFIPatcher/RELEASE_GCC5/X64/SmokelessRuntimeEFIPatcher.efi
+```
+
+## Version History
+
+### v0.2.0 (2026)
+- **Major Feature**: Auto-detection and intelligent patching mode
+- **New**: BIOS type detection via SMBIOS
+- **New**: IFR opcode parser for finding hidden menus
+- **New**: Automatic module discovery
+- **New**: Vendor-specific patching strategies
+- **New**: Write protection bypass
+- **Improved**: Logging and error handling
+- **Maintained**: Backward compatibility with config files
+
+### v0.1.4c (2022)
+- Last release by original author SmokelessCPUv2
+- Manual config file mode only
+
+## Credits
+
+- **Original Author**: SmokelessCPUv2 (2022)
+- **Enhanced Version**: Community contributions (2026)
+- **Testing**: Community testers with various BIOS types
+
+## Disclaimer
+
+This tool is provided for educational and research purposes only. Modifying BIOS settings can potentially damage your system. Always:
+- Create a backup of your BIOS
+- Know how to recover from a bad flash
+- Test on non-critical systems first
+- Understand the risks involved
+
+The authors and contributors are not responsible for any damage caused by using this tool.
