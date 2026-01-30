@@ -17,6 +17,8 @@ As the original creator/maintainer is gone, do not request new features. Feel fr
 ### What?
 This is a tool to patch and inject EFI modules at runtime. SmokelessCPUv2 developed this as they weren't comfortable with SPI flashing, which requires opening the laptop for every small change. With secure boot, you can no longer flash unsigned BIOSes.
 
+**Version 0.3.1 adds configuration save/load functionality!** Save your BIOS modifications to a file and reload them anytime. Export settings for backup or sharing.
+
 **Version 0.3.0 adds an interactive graphical menu interface!** Navigate BIOS settings with arrow keys, view hidden options, and choose your patching strategy from a user-friendly menu.
 
 **Version 0.2.0 added intelligent auto-detection and patching** - automatically detects your BIOS type and patches hidden menus without requiring a config file.
@@ -26,18 +28,24 @@ The tool was developed as a way to unlock a BIOS without the risks/issues/annoya
 
 ## Operating Modes
 
-### INTERACTIVE Mode (New in v0.3.0) - Default & Recommended
+### INTERACTIVE Mode (New in v0.3.0, Enhanced in v0.3.1) - Default & Recommended
 
+**New in v0.3.1!** Configuration save/load functionality added.
 **New in v0.3.0!** SREP now features a full graphical menu interface with keyboard navigation.
 
 **Features**:
 - 🎨 **Graphical Menu System**: Navigate with arrow keys (↑↓), select with Enter, go back with ESC
 - 📋 **Multiple Options**: 
   - Auto-detect and patch BIOS
+  - Load modules and edit settings
   - Browse BIOS settings (read-only)
   - Launch Setup Browser directly
+  - **NEW**: Save configuration to file
+  - **NEW**: Load configuration from file
+  - **NEW**: Export configuration (text)
   - About and Exit options
 - 🔍 **BIOS Browser**: View all available BIOS pages and forms
+- 💾 **Configuration Management**: Save, load, and export your BIOS settings
 - 🎯 **Hidden Option Highlighting**: See which options were unlocked (shown in green)
 - 💡 **Help Text**: Each option shows description at the bottom
 - ✅ **Confirmation Dialogs**: Safe with yes/no prompts
@@ -47,7 +55,7 @@ The tool was developed as a way to unlock a BIOS without the risks/issues/annoya
 +--------------------------------------------------+
 | SmokelessRuntimeEFIPatcher - Main Menu          |
 +--------------------------------------------------+
-  SREP v0.3.0 - Interactive BIOS Patcher
+  SREP v0.3.1 - Interactive BIOS Patcher
   -------------------------------------------
 > Auto-Detect and Patch BIOS
   Browse BIOS Settings  
