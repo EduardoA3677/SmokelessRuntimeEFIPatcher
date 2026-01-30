@@ -836,9 +836,29 @@ MENU_PAGE *HiiBrowserCreateQuestionsMenu(
     if (Context == NULL || Form == NULL || Questions == NULL)
         return NULL;
     
-    MENU_PAGE *Page = MenuCreatePage(Form->Title, QuestionCount + 1);
+    // Add space for: separator, info item, questions, back button
+    MENU_PAGE *Page = MenuCreatePage(Form->Title, QuestionCount + 3);
     if (Page == NULL)
         return NULL;
+    
+    UINTN ItemIndex = 0;
+    
+    // Add form information at the top
+    MenuAddSeparator(Page, ItemIndex++, L"Configuration Options");
+    
+    // Add info about the form
+    CHAR16 InfoText[256];
+    if (Form->IsHidden)
+    {
+        UnicodeSPrint(InfoText, sizeof(InfoText), 
+                     L"  Hidden form with %d configuration options (unlocked)", QuestionCount);
+    }
+    else
+    {
+        UnicodeSPrint(InfoText, sizeof(InfoText), 
+                     L"  %d configuration options available", QuestionCount);
+    }
+    MenuAddInfoItem(Page, ItemIndex++, InfoText);
     
     // Add each question as a menu item with current value displayed
     for (UINTN i = 0; i < QuestionCount; i++)
@@ -899,7 +919,7 @@ MENU_PAGE *HiiBrowserCreateQuestionsMenu(
         
         MenuAddActionItem(
             Page,
-            i,
+            ItemIndex,
             AllocatedTitle ? AllocatedTitle : Question->Prompt,
             Question->HelpText,
             HiiBrowserCallback_EditQuestion,  // Add edit callback
@@ -908,17 +928,19 @@ MENU_PAGE *HiiBrowserCreateQuestionsMenu(
         
         // Mark as hidden or grayed out
         if (Question->IsHidden || Question->IsGrayedOut)
-            Page->Items[i].Hidden = TRUE;
+            Page->Items[ItemIndex].Hidden = TRUE;
         
         if (Question->IsGrayedOut)
-            Page->Items[i].Enabled = TRUE; // Enable it since we've unlocked it
+            Page->Items[ItemIndex].Enabled = TRUE; // Enable it since we've unlocked it
+        
+        ItemIndex++;
     }
     
     // Add back option
     MenuAddActionItem(
         Page,
-        QuestionCount,
-        L"Back",
+        ItemIndex,
+        L"← Back to Form List",
         L"Return to previous menu",
         NULL,
         NULL

@@ -375,8 +375,34 @@ VOID MenuDraw(MENU_CONTEXT *Context)
     ConOut->SetCursorPosition(ConOut, 0, 0);
     ConOut->SetAttribute(ConOut, Context->Colors.TitleColor);
     
-    // Center the title - with NULL check
+    // Initialize title to show
     CHAR16 *TitleToShow = Page->Title ? Page->Title : L"BIOS Setup";
+    
+    // Build breadcrumb navigation for hierarchical menus
+    CHAR16 BreadcrumbText[256];
+    if (Page->Parent != NULL && !Context->UseTabMode)
+    {
+        // Show hierarchical path: Parent > Current
+        if (Page->Parent->Title != NULL && TitleToShow != NULL)
+        {
+            UnicodeSPrint(BreadcrumbText, sizeof(BreadcrumbText),
+                         L"%s > %s", Page->Parent->Title, TitleToShow);
+            TitleToShow = BreadcrumbText;
+        }
+    }
+    else if (Context->UseTabMode && Context->Tabs != NULL && Context->CurrentTabIndex < Context->TabCount)
+    {
+        // In tab mode, show: Tab Name > Form Name (when in submenu)
+        MENU_TAB *CurrentTab = &Context->Tabs[Context->CurrentTabIndex];
+        if (CurrentTab != NULL && CurrentTab->Name != NULL && Page->Parent != NULL)
+        {
+            UnicodeSPrint(BreadcrumbText, sizeof(BreadcrumbText),
+                         L"%s > %s", CurrentTab->Name, TitleToShow);
+            TitleToShow = BreadcrumbText;
+        }
+    }
+    
+    // Center the title - with NULL check
     UINTN TitleLen = StrLen(TitleToShow);
     UINTN Padding = (Context->ScreenWidth - TitleLen) / 2;
     
