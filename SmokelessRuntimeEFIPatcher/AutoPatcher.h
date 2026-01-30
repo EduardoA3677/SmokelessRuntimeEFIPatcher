@@ -17,6 +17,15 @@
 EFI_STATUS AutoPatchBios(EFI_HANDLE ImageHandle, BIOS_INFO *BiosInfo);
 
 /**
+ * Patch all loaded modules that contain IFR data
+ * 
+ * @param ImageHandle   The image handle
+ * @param BiosInfo      BIOS information
+ * @return EFI_SUCCESS if successful
+ */
+EFI_STATUS PatchAllLoadedModules(EFI_HANDLE ImageHandle, BIOS_INFO *BiosInfo);
+
+/**
  * Disable write protections in common locations
  * 
  * @param ImageBase     Base address of module to patch

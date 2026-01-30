@@ -217,6 +217,7 @@ EFI_STATUS FindSetupModules(BIOS_INFO *BiosInfo)
 
     BOOLEAN SetupFound = FALSE;
     BOOLEAN FormBrowserFound = FALSE;
+    UINTN ModulesWithIfrCount = 0;
 
     for (Index = 0; Index < NumberOfHandles; Index++)
     {
@@ -254,14 +255,29 @@ EFI_STATUS FindSetupModules(BIOS_INFO *BiosInfo)
             {
                 CHAR16 *ModuleName = (CHAR16 *)String;
                 
-                // Look for Setup module variants
+                // Log modules that might contain IFR data
+                if (ContainsString(ModuleName, L"Setup") || 
+                    ContainsString(ModuleName, L"Form") ||
+                    ContainsString(ModuleName, L"Hii") ||
+                    ContainsString(ModuleName, L"Browser"))
+                {
+                    ModulesWithIfrCount++;
+                    AsciiSPrint(Log, 512, "Module with potential IFR data: %s\n\r", ModuleName);
+                    LogToFile(LogFile, Log);
+                }
+                
+                // Look for Setup module variants (prefer non-PEI modules)
                 if (!SetupFound && (ContainsString(ModuleName, L"Setup") || 
                     ContainsString(ModuleName, L"SetupUtility")))
                 {
-                    StrCpyS(BiosInfo->SetupModuleName, 64, ModuleName);
-                    SetupFound = TRUE;
-                    AsciiSPrint(Log, 512, "Found Setup Module: %s\n\r", ModuleName);
-                    LogToFile(LogFile, Log);
+                    // Skip PEI modules for Setup execution
+                    if (!ContainsString(ModuleName, L"Pei") && !ContainsString(ModuleName, L"PEI"))
+                    {
+                        StrCpyS(BiosInfo->SetupModuleName, 64, ModuleName);
+                        SetupFound = TRUE;
+                        AsciiSPrint(Log, 512, "Found Setup Module: %s\n\r", ModuleName);
+                        LogToFile(LogFile, Log);
+                    }
                 }
                 
                 // Look for FormBrowser variants
@@ -275,18 +291,15 @@ EFI_STATUS FindSetupModules(BIOS_INFO *BiosInfo)
                 
                 FreePool(String);
             }
-            
-            if (SetupFound && FormBrowserFound)
-                break;
         }
         
         FreePool(Keys);
-        
-        if (SetupFound && FormBrowserFound)
-            break;
     }
 
     FreePool(HandleBuffer);
+
+    AsciiSPrint(Log, 512, "Found %d modules with potential IFR data\n\r", ModulesWithIfrCount);
+    LogToFile(LogFile, Log);
 
     if (!SetupFound)
     {

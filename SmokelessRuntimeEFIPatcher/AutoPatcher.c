@@ -8,6 +8,87 @@ extern EFI_FILE *LogFile;
 void LogToFile(EFI_FILE *LogFile, char *String);
 
 /**
+ * Patch all loaded modules that contain IFR data
+ */
+EFI_STATUS PatchAllLoadedModules(EFI_HANDLE ImageHandle, BIOS_INFO *BiosInfo)
+{
+    EFI_STATUS Status;
+    UINTN HandleSize = 0;
+    EFI_HANDLE *Handles;
+    UINTN TotalPatches = 0;
+
+    AsciiSPrint(Log, 512, "\n--- Scanning All Loaded Modules ---\n\r");
+    LogToFile(LogFile, Log);
+
+    Status = gBS->LocateHandle(ByProtocol, &gEfiLoadedImageProtocolGuid, NULL, &HandleSize, NULL);
+    if (Status == EFI_BUFFER_TOO_SMALL)
+    {
+        Handles = AllocateZeroPool(HandleSize);
+        Status = gBS->LocateHandle(ByProtocol, &gEfiLoadedImageProtocolGuid, NULL, &HandleSize, Handles);
+        
+        if (!EFI_ERROR(Status))
+        {
+            UINTN ModuleCount = HandleSize / sizeof(EFI_HANDLE);
+            AsciiSPrint(Log, 512, "Found %d loaded modules to scan\n\r", ModuleCount);
+            LogToFile(LogFile, Log);
+
+            for (UINTN i = 0; i < ModuleCount; i++)
+            {
+                EFI_LOADED_IMAGE_PROTOCOL *ImageInfo = NULL;
+                Status = gBS->HandleProtocol(Handles[i], &gEfiLoadedImageProtocolGuid, (VOID **)&ImageInfo);
+                
+                if (!EFI_ERROR(Status) && ImageInfo != NULL && ImageInfo->ImageBase != NULL)
+                {
+                    // Get module name if available
+                    CHAR16 *ModuleName = FindLoadedImageFileName(ImageInfo);
+                    
+                    // Parse for IFR data
+                    IFR_PATCH *PatchList = NULL;
+                    Status = ParseIfrData(ImageInfo->ImageBase, ImageInfo->ImageSize, &PatchList);
+                    
+                    if (!EFI_ERROR(Status) && PatchList != NULL)
+                    {
+                        if (ModuleName != NULL)
+                        {
+                            AsciiSPrint(Log, 512, "Patching module: %s at 0x%x\n\r", ModuleName, ImageInfo->ImageBase);
+                            LogToFile(LogFile, Log);
+                        }
+                        else
+                        {
+                            AsciiSPrint(Log, 512, "Patching unnamed module at 0x%x\n\r", ImageInfo->ImageBase);
+                            LogToFile(LogFile, Log);
+                        }
+                        
+                        DisableWriteProtections(ImageInfo->ImageBase, ImageInfo->ImageSize);
+                        
+                        // Apply vendor-specific patches
+                        if (BiosInfo->Type == BIOS_TYPE_AMI || BiosInfo->Type == BIOS_TYPE_AMI_HP_CUSTOM)
+                        {
+                            (VOID)PatchAmiForms(ImageInfo->ImageBase, ImageInfo->ImageSize);
+                        }
+                        else if (BiosInfo->Type == BIOS_TYPE_INSYDE)
+                        {
+                            (VOID)PatchInsydeForms(ImageInfo->ImageBase, ImageInfo->ImageSize);
+                        }
+                        
+                        ApplyIfrPatches(ImageInfo->ImageBase, ImageInfo->ImageSize, PatchList);
+                        FreeIfrPatchList(PatchList);
+                        TotalPatches++;
+                    }
+                }
+            }
+            
+            FreePool(Handles);
+        }
+    }
+
+    AsciiSPrint(Log, 512, "Patched %d modules with IFR data\n\r", TotalPatches);
+    LogToFile(LogFile, Log);
+
+    return EFI_SUCCESS;
+}
+
+/**
  * Main auto-patching function
  */
 EFI_STATUS AutoPatchBios(EFI_HANDLE ImageHandle, BIOS_INFO *BiosInfo)
@@ -28,7 +109,14 @@ EFI_STATUS AutoPatchBios(EFI_HANDLE ImageHandle, BIOS_INFO *BiosInfo)
     AsciiSPrint(Log, 512, "FormBrowser Module: %s\n\r", BiosInfo->FormBrowserName);
     LogToFile(LogFile, Log);
 
+    // First, patch all currently loaded modules
+    AsciiSPrint(Log, 512, "\n=== Phase 1: Patching Loaded Modules ===\n\r");
+    LogToFile(LogFile, Log);
+    PatchAllLoadedModules(ImageHandle, BiosInfo);
+
     // Dispatch to appropriate patcher based on BIOS type
+    AsciiSPrint(Log, 512, "\n=== Phase 2: Vendor-Specific Patching ===\n\r");
+    LogToFile(LogFile, Log);
     switch (BiosInfo->Type)
     {
     case BIOS_TYPE_AMI:
@@ -237,6 +325,20 @@ EFI_STATUS ExecuteSetupBrowser(EFI_HANDLE ImageHandle, BIOS_INFO *BiosInfo)
     {
         AsciiSPrint(Log, 512, "Could not load Setup module: %r\n\r", Status);
         LogToFile(LogFile, Log);
+        
+        // If we can't load Setup, try to find an already-loaded Setup UI
+        AsciiSPrint(Log, 512, "Attempting to find already-loaded Setup UI...\n\r");
+        LogToFile(LogFile, Log);
+        
+        // Wait indefinitely so the system doesn't boot
+        Print(L"\n\rSetup module not found. System will not boot to OS.\n\r");
+        Print(L"Press Ctrl+Alt+Del to restart.\n\r");
+        
+        while (TRUE)
+        {
+            gBS->Stall(1000000); // Wait 1 second
+        }
+        
         return Status;
     }
 
@@ -267,10 +369,33 @@ EFI_STATUS ExecuteSetupBrowser(EFI_HANDLE ImageHandle, BIOS_INFO *BiosInfo)
     AsciiSPrint(Log, 512, "Executing Setup Browser...\n\r");
     LogToFile(LogFile, Log);
     
+    Print(L"\n\rLaunching BIOS Setup UI...\n\r");
+    
     Status = Exec(&AppImageHandle);
     
     AsciiSPrint(Log, 512, "Setup Browser returned: %r\n\r", Status);
     LogToFile(LogFile, Log);
+
+    // After Setup returns, don't let the system boot to OS
+    // Keep waiting to prevent boot
+    Print(L"\n\rSetup UI exited. System will not boot to OS.\n\r");
+    Print(L"Press Ctrl+Alt+Del to restart, or power off the system.\n\r");
+    
+    AsciiSPrint(Log, 512, "Preventing boot to OS - entering infinite loop\n\r");
+    LogToFile(LogFile, Log);
+    
+    // Close log file before infinite loop
+    if (LogFile != NULL)
+    {
+        LogFile->Close(LogFile);
+        LogFile = NULL;
+    }
+    
+    // Infinite loop to prevent booting
+    while (TRUE)
+    {
+        gBS->Stall(1000000); // Wait 1 second
+    }
 
     return Status;
 }
