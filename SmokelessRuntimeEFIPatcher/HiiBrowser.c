@@ -84,6 +84,172 @@ EFI_STATUS HiiBrowserInitialize(HII_BROWSER_CONTEXT *Context)
 }
 
 /**
+ * Parse IFR package to extract real form information
+ */
+STATIC EFI_STATUS ParseIfrPackage(
+    HII_BROWSER_CONTEXT *Context,
+    EFI_HII_HANDLE HiiHandle,
+    UINT8 *IfrData,
+    UINTN IfrSize,
+    HII_FORM_INFO **FormList,
+    UINTN *FormCount
+)
+{
+    if (IfrData == NULL || IfrSize == 0 || FormList == NULL || FormCount == NULL)
+        return EFI_INVALID_PARAMETER;
+    
+    UINT8 *Data = IfrData;
+    UINTN Offset = 0;
+    HII_FORM_INFO *Forms = NULL;
+    UINTN Count = 0;
+    UINTN Capacity = 10;  // Initial capacity
+    
+    EFI_GUID CurrentFormSetGuid = {0};
+    UINT16 CurrentFormId = 0;
+    CHAR16 *CurrentFormTitle = NULL;
+    BOOLEAN InSuppressIf = FALSE;
+    
+    // Allocate initial form array
+    Forms = AllocateZeroPool(sizeof(HII_FORM_INFO) * Capacity);
+    if (Forms == NULL)
+        return EFI_OUT_OF_RESOURCES;
+    
+    // Parse IFR opcodes
+    while (Offset < IfrSize)
+    {
+        if (Offset + sizeof(EFI_IFR_OP_HEADER) > IfrSize)
+            break;
+        
+        EFI_IFR_OP_HEADER *OpHeader = (EFI_IFR_OP_HEADER *)&Data[Offset];
+        
+        if (OpHeader->Length == 0 || OpHeader->Length > IfrSize - Offset)
+            break;
+        
+        switch (OpHeader->OpCode)
+        {
+            case EFI_IFR_FORM_SET_OP:
+            {
+                if (Offset + sizeof(EFI_IFR_FORM_SET) <= IfrSize)
+                {
+                    EFI_IFR_FORM_SET *FormSet = (EFI_IFR_FORM_SET *)OpHeader;
+                    CopyMem(&CurrentFormSetGuid, &FormSet->Guid, sizeof(EFI_GUID));
+                }
+                break;
+            }
+            
+            case EFI_IFR_FORM_OP:
+            {
+                if (Offset + sizeof(EFI_IFR_FORM) <= IfrSize)
+                {
+                    EFI_IFR_FORM *Form = (EFI_IFR_FORM *)OpHeader;
+                    CurrentFormId = Form->FormId;
+                    
+                    // Get form title string
+                    EFI_STRING_ID TitleStringId = Form->FormTitle;
+                    CHAR16 *TitleStr = NULL;
+                    
+                    if (Context->HiiDatabase != NULL)
+                    {
+                        EFI_HII_STRING_PROTOCOL *HiiString = NULL;
+                        EFI_STATUS Status = gBS->LocateProtocol(
+                            &gEfiHiiStringProtocolGuid,
+                            NULL,
+                            (VOID **)&HiiString
+                        );
+                        
+                        if (!EFI_ERROR(Status) && HiiString != NULL)
+                        {
+                            UINTN StringSize = 0;
+                            HiiString->GetString(
+                                HiiString,
+                                "en-US",
+                                HiiHandle,
+                                TitleStringId,
+                                NULL,
+                                &StringSize,
+                                NULL
+                            );
+                            
+                            if (StringSize > 0)
+                            {
+                                TitleStr = AllocateZeroPool(StringSize);
+                                if (TitleStr != NULL)
+                                {
+                                    HiiString->GetString(
+                                        HiiString,
+                                        "en-US",
+                                        HiiHandle,
+                                        TitleStringId,
+                                        TitleStr,
+                                        &StringSize,
+                                        NULL
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Add form to list
+                    if (Count >= Capacity)
+                    {
+                        // Expand array
+                        Capacity *= 2;
+                        HII_FORM_INFO *NewForms = AllocateZeroPool(sizeof(HII_FORM_INFO) * Capacity);
+                        if (NewForms != NULL)
+                        {
+                            CopyMem(NewForms, Forms, sizeof(HII_FORM_INFO) * Count);
+                            FreePool(Forms);
+                            Forms = NewForms;
+                        }
+                    }
+                    
+                    if (Count < Capacity)
+                    {
+                        Forms[Count].HiiHandle = HiiHandle;
+                        CopyMem(&Forms[Count].FormSetGuid, &CurrentFormSetGuid, sizeof(EFI_GUID));
+                        Forms[Count].FormId = CurrentFormId;
+                        
+                        if (TitleStr != NULL)
+                        {
+                            Forms[Count].Title = TitleStr;
+                        }
+                        else
+                        {
+                            // Fallback title
+                            Forms[Count].Title = AllocateCopyPool(StrSize(L"BIOS Form"), L"BIOS Form");
+                        }
+                        
+                        Forms[Count].IsHidden = InSuppressIf;
+                        Count++;
+                    }
+                }
+                break;
+            }
+            
+            case EFI_IFR_SUPPRESS_IF_OP:
+            {
+                InSuppressIf = TRUE;
+                break;
+            }
+            
+            case EFI_IFR_END_OP:
+            {
+                // End of suppress/grayout scope
+                InSuppressIf = FALSE;
+                break;
+            }
+        }
+        
+        Offset += OpHeader->Length;
+    }
+    
+    *FormList = Forms;
+    *FormCount = Count;
+    
+    return EFI_SUCCESS;
+}
+
+/**
  * Enumerate all HII forms in the system
  */
 EFI_STATUS HiiBrowserEnumerateForms(HII_BROWSER_CONTEXT *Context)
@@ -126,28 +292,107 @@ EFI_STATUS HiiBrowserEnumerateForms(HII_BROWSER_CONTEXT *Context)
         return Status;
     }
     
-    // Allocate form info array
-    Context->Forms = AllocateZeroPool(HandleCount * sizeof(HII_FORM_INFO) * 10); // Estimate 10 forms per handle
-    if (Context->Forms == NULL)
+    Print(L"Found %d HII package lists\n\r", HandleCount);
+    
+    // Parse each HII package to extract real forms
+    UINTN TotalFormCount = 0;
+    HII_FORM_INFO *AllForms = NULL;
+    UINTN AllFormsCapacity = HandleCount * 10;  // Estimate
+    
+    AllForms = AllocateZeroPool(sizeof(HII_FORM_INFO) * AllFormsCapacity);
+    if (AllForms == NULL)
     {
         if (HiiHandles != NULL)
             FreePool(HiiHandles);
         return EFI_OUT_OF_RESOURCES;
     }
     
-    Context->FormCount = 0;
-    
-    // For now, just create placeholder entries for each HII handle
-    // A full implementation would parse the IFR package data
     for (UINTN i = 0; i < HandleCount; i++)
     {
-        HII_FORM_INFO *FormInfo = &Context->Forms[Context->FormCount];
-        FormInfo->HiiHandle = HiiHandles[i];
-        FormInfo->FormId = 0;
-        FormInfo->Title = AllocateCopyPool(StrSize(L"BIOS Form"), L"BIOS Form");
-        FormInfo->IsHidden = FALSE;
-        Context->FormCount++;
+        // Get package list for this handle
+        UINTN BufferSize = 0;
+        EFI_HII_PACKAGE_LIST_HEADER *PackageList = NULL;
+        
+        Status = Context->HiiDatabase->ExportPackageLists(
+            Context->HiiDatabase,
+            HiiHandles[i],
+            &BufferSize,
+            PackageList
+        );
+        
+        if (Status == EFI_BUFFER_TOO_SMALL)
+        {
+            PackageList = AllocateZeroPool(BufferSize);
+            if (PackageList != NULL)
+            {
+                Status = Context->HiiDatabase->ExportPackageLists(
+                    Context->HiiDatabase,
+                    HiiHandles[i],
+                    &BufferSize,
+                    PackageList
+                );
+                
+                if (!EFI_ERROR(Status))
+                {
+                    // Parse IFR packages within this package list
+                    UINT8 *PackageData = (UINT8 *)PackageList + sizeof(EFI_HII_PACKAGE_LIST_HEADER);
+                    UINTN PackageOffset = 0;
+                    UINTN TotalPackageSize = PackageList->PackageLength - sizeof(EFI_HII_PACKAGE_LIST_HEADER);
+                    
+                    while (PackageOffset < TotalPackageSize)
+                    {
+                        EFI_HII_PACKAGE_HEADER *PackageHeader = (EFI_HII_PACKAGE_HEADER *)&PackageData[PackageOffset];
+                        
+                        if (PackageHeader->Length == 0)
+                            break;
+                        
+                        // Check if this is an IFR package
+                        if ((PackageHeader->Type & 0x7F) == EFI_HII_PACKAGE_FORMS)
+                        {
+                            // Parse IFR data
+                            UINT8 *IfrData = (UINT8 *)PackageHeader + sizeof(EFI_HII_PACKAGE_HEADER);
+                            UINTN IfrSize = PackageHeader->Length - sizeof(EFI_HII_PACKAGE_HEADER);
+                            
+                            HII_FORM_INFO *FormList = NULL;
+                            UINTN FormCount = 0;
+                            
+                            Status = ParseIfrPackage(
+                                Context,
+                                HiiHandles[i],
+                                IfrData,
+                                IfrSize,
+                                &FormList,
+                                &FormCount
+                            );
+                            
+                            if (!EFI_ERROR(Status) && FormCount > 0)
+                            {
+                                // Add to overall list
+                                for (UINTN j = 0; j < FormCount && TotalFormCount < AllFormsCapacity; j++)
+                                {
+                                    CopyMem(&AllForms[TotalFormCount], &FormList[j], sizeof(HII_FORM_INFO));
+                                    TotalFormCount++;
+                                }
+                                
+                                if (FormList != NULL)
+                                    FreePool(FormList);
+                            }
+                        }
+                        
+                        PackageOffset += PackageHeader->Length;
+                    }
+                }
+                
+                FreePool(PackageList);
+            }
+        }
     }
+    
+    // Store results in context
+    Context->Forms = AllForms;
+    Context->FormCount = TotalFormCount;
+    
+    Print(L"Extracted %d real BIOS forms from HII database\n\r", TotalFormCount);
     
     // Always free HiiHandles after use
     if (HiiHandles != NULL)
@@ -194,6 +439,9 @@ EFI_STATUS HiiBrowserGetFormQuestions(
 /**
  * Create a menu page from HII forms
  */
+/**
+ * Create a menu page from HII forms
+ */
 MENU_PAGE *HiiBrowserCreateFormsMenu(HII_BROWSER_CONTEXT *Context)
 {
     if (Context == NULL)
@@ -203,20 +451,19 @@ MENU_PAGE *HiiBrowserCreateFormsMenu(HII_BROWSER_CONTEXT *Context)
     if (Page == NULL)
         return NULL;
     
-    // Add each form as a menu item
+    // Add each form as a menu item using real titles
     for (UINTN i = 0; i < Context->FormCount; i++)
     {
         HII_FORM_INFO *Form = &Context->Forms[i];
         
-        // For now, create simple entries
-        CHAR16 Title[100];
-        UnicodeSPrint(Title, sizeof(Title), L"BIOS Page %d", i + 1);
+        // Use the real form title extracted from IFR
+        CHAR16 *DisplayTitle = Form->Title;
         
         MenuAddActionItem(
             Page,
             i,
-            Title,
-            Form->IsHidden ? L"[Hidden/Unlocked Option]" : L"Standard BIOS Page",
+            DisplayTitle,
+            Form->IsHidden ? L"[Previously Hidden/Suppressed Form]" : L"BIOS Configuration Form",
             NULL,
             Form
         );
@@ -562,4 +809,166 @@ VOID HiiBrowserCleanup(HII_BROWSER_CONTEXT *Context)
         NvramCleanup(Context->NvramManager);
         FreePool(Context->NvramManager);
     }
+}
+
+/**
+ * Helper: Categorize form into tab based on title keywords
+ */
+STATIC UINTN CategorizeForm(CHAR16 *Title)
+{
+    if (Title == NULL)
+        return 0;  // Main by default
+    
+    // Convert to uppercase for comparison
+    CHAR16 Upper[128];
+    UINTN Len = StrLen(Title);
+    if (Len >= 128) Len = 127;
+    
+    for (UINTN i = 0; i < Len; i++)
+    {
+        if (Title[i] >= L'a' && Title[i] <= L'z')
+            Upper[i] = Title[i] - 32;
+        else
+            Upper[i] = Title[i];
+    }
+    Upper[Len] = 0;
+    
+    // Check for keywords
+    if (StrStr(Upper, L"MAIN") != NULL || StrStr(Upper, L"SYSTEM") != NULL || 
+        StrStr(Upper, L"INFO") != NULL)
+        return 0;  // Main tab
+    
+    if (StrStr(Upper, L"ADVANCED") != NULL || StrStr(Upper, L"CPU") != NULL || 
+        StrStr(Upper, L"CHIPSET") != NULL || StrStr(Upper, L"PERIPHERAL") != NULL)
+        return 1;  // Advanced tab
+    
+    if (StrStr(Upper, L"POWER") != NULL || StrStr(Upper, L"ACPI") != NULL || 
+        StrStr(Upper, L"THERMAL") != NULL)
+        return 2;  // Power tab
+    
+    if (StrStr(Upper, L"BOOT") != NULL || StrStr(Upper, L"STARTUP") != NULL)
+        return 3;  // Boot tab
+    
+    if (StrStr(Upper, L"SECURITY") != NULL || StrStr(Upper, L"PASSWORD") != NULL || 
+        StrStr(Upper, L"TPM") != NULL || StrStr(Upper, L"SECURE") != NULL)
+        return 4;  // Security tab
+    
+    if (StrStr(Upper, L"EXIT") != NULL || StrStr(Upper, L"SAVE") != NULL)
+        return 5;  // Save & Exit tab
+    
+    return 0;  // Default to Main
+}
+
+/**
+ * Create dynamic tabs from extracted BIOS forms
+ */
+EFI_STATUS HiiBrowserCreateDynamicTabs(
+    HII_BROWSER_CONTEXT *Context,
+    MENU_CONTEXT *MenuCtx
+)
+{
+    if (Context == NULL || MenuCtx == NULL)
+        return EFI_INVALID_PARAMETER;
+    
+    if (Context->FormCount == 0)
+    {
+        Print(L"No forms extracted from BIOS\n");
+        return EFI_NOT_FOUND;
+    }
+    
+    Print(L"Creating dynamic tabs from %d BIOS forms...\n", Context->FormCount);
+    
+    // Initialize tabs
+    EFI_STATUS Status = MenuInitializeTabs(MenuCtx, 6);
+    if (EFI_ERROR(Status))
+        return Status;
+    
+    // Create 6 tab pages
+    MENU_PAGE *TabPages[6] = {NULL};
+    UINTN TabFormCounts[6] = {0};
+    
+    // Count forms per tab
+    for (UINTN i = 0; i < Context->FormCount; i++)
+    {
+        UINTN TabIndex = CategorizeForm(Context->Forms[i].Title);
+        TabFormCounts[TabIndex]++;
+    }
+    
+    // Create pages for each tab
+    CHAR16 *TabNames[6] = {
+        L"Main",
+        L"Advanced",
+        L"Power",
+        L"Boot",
+        L"Security",
+        L"Save & Exit"
+    };
+    
+    for (UINTN t = 0; t < 6; t++)
+    {
+        UINTN ItemCount = TabFormCounts[t] + 2;  // +2 for separator and info
+        TabPages[t] = MenuCreatePage(TabNames[t], ItemCount);
+        
+        if (TabPages[t] != NULL)
+        {
+            UINTN ItemIndex = 0;
+            
+            // Add forms belonging to this tab
+            for (UINTN i = 0; i < Context->FormCount; i++)
+            {
+                if (CategorizeForm(Context->Forms[i].Title) == t)
+                {
+                    MenuAddActionItem(
+                        TabPages[t],
+                        ItemIndex,
+                        Context->Forms[i].Title,
+                        Context->Forms[i].IsHidden ? L"[Previously Hidden]" : L"BIOS Configuration",
+                        NULL,
+                        &Context->Forms[i]
+                    );
+                    
+                    if (Context->Forms[i].IsHidden)
+                        TabPages[t]->Items[ItemIndex].Hidden = TRUE;
+                    
+                    ItemIndex++;
+                }
+            }
+            
+            // Add separator and info
+            if (ItemIndex < ItemCount - 2)
+            {
+                MenuAddSeparator(TabPages[t], ItemIndex, NULL);
+                ItemIndex++;
+            }
+            
+            if (ItemIndex < ItemCount - 1)
+            {
+                CHAR16 InfoText[100];
+                UnicodeSPrint(InfoText, sizeof(InfoText), L"%d configuration form(s) in this category", TabFormCounts[t]);
+                MenuAddInfoItem(TabPages[t], ItemIndex, InfoText);
+            }
+        }
+    }
+    
+    // Add tabs to menu
+    for (UINTN t = 0; t < 6; t++)
+    {
+        if (TabPages[t] != NULL)
+        {
+            MenuAddTab(MenuCtx, t, TabNames[t], TabPages[t]);
+        }
+    }
+    
+    // Start with Main tab
+    MenuSwitchTab(MenuCtx, 0);
+    
+    Print(L"Dynamic tabs created successfully\n");
+    Print(L"  Main: %d forms\n", TabFormCounts[0]);
+    Print(L"  Advanced: %d forms\n", TabFormCounts[1]);
+    Print(L"  Power: %d forms\n", TabFormCounts[2]);
+    Print(L"  Boot: %d forms\n", TabFormCounts[3]);
+    Print(L"  Security: %d forms\n", TabFormCounts[4]);
+    Print(L"  Save & Exit: %d forms\n", TabFormCounts[5]);
+    
+    return EFI_SUCCESS;
 }

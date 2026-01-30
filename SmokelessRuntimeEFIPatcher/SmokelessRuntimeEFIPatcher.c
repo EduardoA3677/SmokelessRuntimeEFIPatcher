@@ -494,112 +494,49 @@ EFI_STATUS CreateMainMenu(SREP_CONTEXT *SrepCtx, MENU_PAGE **OutMenu)
 }
 
 /**
- * Create BIOS-style tabbed menu interface
+ * Create BIOS-style tabbed menu interface with dynamic form extraction
  */
 EFI_STATUS CreateBiosStyleTabbedMenu(SREP_CONTEXT *SrepCtx)
 {
     EFI_STATUS Status;
     MENU_CONTEXT *MenuCtx = SrepCtx->MenuContext;
+    HII_BROWSER_CONTEXT HiiCtx;
     
-    // Initialize tab mode with 6 tabs
-    Status = MenuInitializeTabs(MenuCtx, 6);
+    Print(L"\n=== Extracting Real BIOS Forms ===\n");
+    
+    // Initialize HII browser to extract forms
+    Status = HiiBrowserInitialize(&HiiCtx);
     if (EFI_ERROR(Status))
     {
+        Print(L"Failed to initialize HII browser: %r\n", Status);
         return Status;
     }
     
-    // Create Main tab page
-    MENU_PAGE *MainPage = MenuCreatePage(L"Main Configuration", 8);
-    if (MainPage == NULL) return EFI_OUT_OF_RESOURCES;
+    HiiCtx.MenuContext = MenuCtx;
     
-    MenuAddInfoItem(MainPage, 0, L"BIOS Information");
-    MenuAddSeparator(MainPage, 1, NULL);
-    MenuAddActionItem(MainPage, 2, L"Auto-Detect BIOS Type", 
-                     L"Automatically detect and display BIOS vendor information", 
-                     MenuCallback_AutoPatch, SrepCtx);
-    MenuAddActionItem(MainPage, 3, L"Browse BIOS Settings", 
-                     L"View all available BIOS configuration options", 
-                     MenuCallback_BrowseSettings, MenuCtx);
-    MenuAddSeparator(MainPage, 4, NULL);
-    MenuAddInfoItem(MainPage, 5, L"System Date and Time");
-    MenuAddInfoItem(MainPage, 6, L"System Memory: (Auto-detected)");
-    MenuAddInfoItem(MainPage, 7, L"Processor: (Auto-detected)");
+    // Enumerate and parse real BIOS forms
+    Status = HiiBrowserEnumerateForms(&HiiCtx);
+    if (EFI_ERROR(Status))
+    {
+        Print(L"Failed to enumerate BIOS forms: %r\n", Status);
+        HiiBrowserCleanup(&HiiCtx);
+        return Status;
+    }
     
-    // Create Advanced tab page
-    MENU_PAGE *AdvancedPage = MenuCreatePage(L"Advanced Configuration", 7);
-    if (AdvancedPage == NULL) return EFI_OUT_OF_RESOURCES;
+    // Create dynamic tabs based on extracted forms
+    Status = HiiBrowserCreateDynamicTabs(&HiiCtx, MenuCtx);
+    if (EFI_ERROR(Status))
+    {
+        Print(L"Failed to create dynamic tabs: %r\n", Status);
+        HiiBrowserCleanup(&HiiCtx);
+        return Status;
+    }
     
-    MenuAddInfoItem(AdvancedPage, 0, L"Advanced BIOS Features");
-    MenuAddSeparator(AdvancedPage, 1, NULL);
-    MenuAddActionItem(AdvancedPage, 2, L"Load and Edit BIOS Settings", 
-                     L"Load BIOS modules and modify configuration values", 
-                     MenuCallback_LoadAndEdit, SrepCtx);
-    MenuAddActionItem(AdvancedPage, 3, L"Launch Native Setup Browser", 
-                     L"Open the native BIOS configuration interface", 
-                     MenuCallback_LaunchSetup, MenuCtx);
-    MenuAddSeparator(AdvancedPage, 4, NULL);
-    MenuAddInfoItem(AdvancedPage, 5, L"CPU Configuration");
-    MenuAddInfoItem(AdvancedPage, 6, L"Chipset Configuration");
+    Print(L"\nPress any key to enter BIOS-style interface...\n");
+    WaitForKey();
     
-    // Create Power tab page
-    MENU_PAGE *PowerPage = MenuCreatePage(L"Power Management", 5);
-    if (PowerPage == NULL) return EFI_OUT_OF_RESOURCES;
-    
-    MenuAddInfoItem(PowerPage, 0, L"Power Management Options");
-    MenuAddSeparator(PowerPage, 1, NULL);
-    MenuAddInfoItem(PowerPage, 2, L"ACPI Settings");
-    MenuAddInfoItem(PowerPage, 3, L"Wake Events");
-    MenuAddInfoItem(PowerPage, 4, L"Power Button Configuration");
-    
-    // Create Boot tab page
-    MENU_PAGE *BootPage = MenuCreatePage(L"Boot Configuration", 5);
-    if (BootPage == NULL) return EFI_OUT_OF_RESOURCES;
-    
-    MenuAddInfoItem(BootPage, 0, L"Boot Options");
-    MenuAddSeparator(BootPage, 1, NULL);
-    MenuAddInfoItem(BootPage, 2, L"Boot Order");
-    MenuAddInfoItem(BootPage, 3, L"Boot Mode: UEFI");
-    MenuAddInfoItem(BootPage, 4, L"Fast Boot: Enabled");
-    
-    // Create Security tab page
-    MENU_PAGE *SecurityPage = MenuCreatePage(L"Security", 6);
-    if (SecurityPage == NULL) return EFI_OUT_OF_RESOURCES;
-    
-    MenuAddInfoItem(SecurityPage, 0, L"Security Settings");
-    MenuAddSeparator(SecurityPage, 1, NULL);
-    MenuAddInfoItem(SecurityPage, 2, L"Secure Boot Configuration");
-    MenuAddInfoItem(SecurityPage, 3, L"Password Protection");
-    MenuAddInfoItem(SecurityPage, 4, L"TPM Configuration");
-    MenuAddInfoItem(SecurityPage, 5, L"Secure Boot Status: Enabled");
-    
-    // Create Save & Exit tab page
-    MENU_PAGE *ExitPage = MenuCreatePage(L"Save & Exit", 7);
-    if (ExitPage == NULL) return EFI_OUT_OF_RESOURCES;
-    
-    MenuAddInfoItem(ExitPage, 0, L"Exit Options");
-    MenuAddSeparator(ExitPage, 1, NULL);
-    MenuAddActionItem(ExitPage, 2, L"Save Changes and Exit", 
-                     L"Save all NVRAM changes and exit to UEFI Shell", 
-                     MenuCallback_Exit, SrepCtx);
-    MenuAddActionItem(ExitPage, 3, L"Discard Changes and Exit", 
-                     L"Exit without saving changes", 
-                     MenuCallback_Exit, SrepCtx);
-    MenuAddSeparator(ExitPage, 4, NULL);
-    MenuAddActionItem(ExitPage, 5, L"About SREP", 
-                     L"Version and copyright information", 
-                     MenuCallback_About, SrepCtx);
-    MenuAddInfoItem(ExitPage, 6, L"SREP v0.3.1 - Enhanced UEFI BIOS Patcher");
-    
-    // Add all tabs to the menu
-    MenuAddTab(MenuCtx, 0, L"Main", MainPage);
-    MenuAddTab(MenuCtx, 1, L"Advanced", AdvancedPage);
-    MenuAddTab(MenuCtx, 2, L"Power", PowerPage);
-    MenuAddTab(MenuCtx, 3, L"Boot", BootPage);
-    MenuAddTab(MenuCtx, 4, L"Security", SecurityPage);
-    MenuAddTab(MenuCtx, 5, L"Save & Exit", ExitPage);
-    
-    // Start with Main tab
-    MenuSwitchTab(MenuCtx, 0);
+    // Note: We keep HiiCtx alive for the menu session
+    // It will be cleaned up when exiting
     
     return EFI_SUCCESS;
 }

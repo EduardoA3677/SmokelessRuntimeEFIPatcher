@@ -90,6 +90,15 @@ MENU_PAGE *HiiBrowserCreateQuestionsMenu(
 );
 
 /**
+ * Create dynamic tabs from extracted BIOS forms
+ * Organizes forms into tabs based on form titles and categories
+ */
+EFI_STATUS HiiBrowserCreateDynamicTabs(
+    HII_BROWSER_CONTEXT *Context,
+    MENU_CONTEXT *MenuCtx
+);
+
+/**
  * Get current value of a question from NVRAM
  */
 EFI_STATUS HiiBrowserGetQuestionValue(
