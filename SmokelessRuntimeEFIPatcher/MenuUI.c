@@ -1,4 +1,5 @@
 #include "MenuUI.h"
+#include "HiiBrowser.h"
 #include <Library/BaseMemoryLib.h>
 #include <Library/PrintLib.h>
 
@@ -615,7 +616,18 @@ EFI_STATUS MenuHandleInput(MENU_CONTEXT *Context, EFI_INPUT_KEY *Key)
     else if (Key->ScanCode == SCAN_F10)
     {
         // F10: Save and Exit
-        MenuShowMessage(Context, L"Save & Exit", L"Save changes and exit? Press ESC to confirm exit.");
+        // Check if we have HII context (for BIOS editor mode)
+        if (Context->UserData != NULL)
+        {
+            // UserData contains HII_BROWSER_CONTEXT
+            HII_BROWSER_CONTEXT *HiiCtx = (HII_BROWSER_CONTEXT *)Context->UserData;
+            HiiBrowserShowSaveDialog(HiiCtx);
+        }
+        else
+        {
+            // No HII context, just show message
+            MenuShowMessage(Context, L"Save & Exit", L"Save changes and exit? Press ESC to confirm exit.");
+        }
         return EFI_SUCCESS;
     }
     else if (Key->ScanCode == SCAN_F5)

@@ -840,17 +840,69 @@ MENU_PAGE *HiiBrowserCreateQuestionsMenu(
     if (Page == NULL)
         return NULL;
     
-    // Add each question as a menu item
+    // Add each question as a menu item with current value displayed
     for (UINTN i = 0; i < QuestionCount; i++)
     {
         HII_QUESTION_INFO *Question = &Questions[i];
+        CHAR16 TitleWithValue[256];
+        
+        // Build title with current value
+        if (Question->Type == EFI_IFR_CHECKBOX_OP)
+        {
+            // Get current checkbox value
+            UINT8 Value = 0;
+            if (!EFI_ERROR(HiiBrowserGetQuestionValue(Context, Question, &Value)))
+            {
+                UnicodeSPrint(TitleWithValue, sizeof(TitleWithValue), 
+                             L"%s [%s]", Question->Prompt, Value ? L"☑" : L"☐");
+            }
+            else
+            {
+                UnicodeSPrint(TitleWithValue, sizeof(TitleWithValue), 
+                             L"%s [☐]", Question->Prompt);
+            }
+        }
+        else if (Question->Type == EFI_IFR_ONE_OF_OP)
+        {
+            // For OneOf, show selected option text if available
+            UnicodeSPrint(TitleWithValue, sizeof(TitleWithValue), 
+                         L"%s [...]", Question->Prompt);
+        }
+        else if (Question->Type == EFI_IFR_NUMERIC_OP)
+        {
+            // Show numeric value
+            UINT64 Value = 0;
+            if (!EFI_ERROR(HiiBrowserGetQuestionValue(Context, Question, &Value)))
+            {
+                UnicodeSPrint(TitleWithValue, sizeof(TitleWithValue), 
+                             L"%s [%d]", Question->Prompt, Value);
+            }
+            else
+            {
+                UnicodeSPrint(TitleWithValue, sizeof(TitleWithValue), 
+                             L"%s [0]", Question->Prompt);
+            }
+        }
+        else if (Question->Type == EFI_IFR_STRING_OP)
+        {
+            UnicodeSPrint(TitleWithValue, sizeof(TitleWithValue), 
+                         L"%s [String]", Question->Prompt);
+        }
+        else
+        {
+            UnicodeSPrint(TitleWithValue, sizeof(TitleWithValue), 
+                         L"%s", Question->Prompt);
+        }
+        
+        // Allocate and copy the title
+        CHAR16 *AllocatedTitle = AllocateCopyPool(StrSize(TitleWithValue), TitleWithValue);
         
         MenuAddActionItem(
             Page,
             i,
-            Question->Prompt,
+            AllocatedTitle ? AllocatedTitle : Question->Prompt,
             Question->HelpText,
-            NULL,
+            HiiBrowserCallback_EditQuestion,  // Add edit callback
             Question
         );
         
@@ -1120,6 +1172,110 @@ EFI_STATUS HiiBrowserSaveChanges(HII_BROWSER_CONTEXT *Context)
     }
     
     return Status;
+}
+
+/**
+ * Callback: Edit question value (for ENTER key)
+ */
+EFI_STATUS HiiBrowserCallback_EditQuestion(MENU_ITEM *Item, VOID *Context)
+{
+    if (Item == NULL || Item->Data == NULL || Context == NULL)
+        return EFI_INVALID_PARAMETER;
+    
+    MENU_CONTEXT *MenuCtx = (MENU_CONTEXT *)Context;
+    HII_QUESTION_INFO *Question = (HII_QUESTION_INFO *)Item->Data;
+    
+    // Get HII browser context
+    HII_BROWSER_CONTEXT *HiiCtx = (HII_BROWSER_CONTEXT *)MenuCtx->UserData;
+    if (HiiCtx == NULL)
+    {
+        MenuShowMessage(MenuCtx, L"Error", L"HII Browser context not available!");
+        return EFI_NOT_READY;
+    }
+    
+    // Handle based on question type
+    if (Question->Type == EFI_IFR_CHECKBOX_OP)
+    {
+        // Toggle checkbox
+        UINT8 CurrentValue = 0;
+        HiiBrowserGetQuestionValue(HiiCtx, Question, &CurrentValue);
+        
+        UINT8 NewValue = CurrentValue ? 0 : 1;
+        EFI_STATUS Status = HiiBrowserSetQuestionValue(HiiCtx, Question, &NewValue);
+        
+        if (!EFI_ERROR(Status))
+        {
+            // Update the title to show new state
+            CHAR16 NewTitle[256];
+            UnicodeSPrint(NewTitle, sizeof(NewTitle), 
+                         L"%s [%s]%s", Question->Prompt, NewValue ? L"☑" : L"☐",
+                         Question->IsModified ? L" *" : L"");
+            
+            // Redraw the menu
+            MenuDraw(MenuCtx);
+        }
+        
+        return Status;
+    }
+    else if (Question->Type == EFI_IFR_NUMERIC_OP)
+    {
+        // Edit numeric value
+        return HiiBrowserEditQuestion(HiiCtx, Question);
+    }
+    else if (Question->Type == EFI_IFR_ONE_OF_OP)
+    {
+        // Show OneOf selection menu
+        MenuShowMessage(MenuCtx, L"OneOf", L"OneOf selection not yet implemented");
+        return EFI_SUCCESS;
+    }
+    else if (Question->Type == EFI_IFR_STRING_OP)
+    {
+        // Edit string value
+        MenuShowMessage(MenuCtx, L"String", L"String editing not yet implemented");
+        return EFI_SUCCESS;
+    }
+    
+    return EFI_UNSUPPORTED;
+}
+
+/**
+ * Show save confirmation dialog (for F10)
+ */
+EFI_STATUS HiiBrowserShowSaveDialog(HII_BROWSER_CONTEXT *Context)
+{
+    if (Context == NULL || Context->MenuContext == NULL)
+        return EFI_INVALID_PARAMETER;
+    
+    // Check if there are changes
+    if (!HiiBrowserHasChanges(Context))
+    {
+        MenuShowMessage(Context->MenuContext, L"No Changes", L"No modified values to save");
+        return EFI_SUCCESS;
+    }
+    
+    // Show confirmation dialog
+    BOOLEAN SaveChanges = FALSE;
+    MenuShowConfirm(Context->MenuContext, L"Save Configuration", 
+                   L"Save configuration changes and exit?", &SaveChanges);
+    
+    if (SaveChanges)
+    {
+        // Save changes
+        return HiiBrowserSaveChanges(Context);
+    }
+    
+    return EFI_ABORTED;
+}
+
+/**
+ * Check if there are any unsaved changes
+ */
+BOOLEAN HiiBrowserHasChanges(HII_BROWSER_CONTEXT *Context)
+{
+    if (Context == NULL || Context->NvramManager == NULL)
+        return FALSE;
+    
+    return NvramGetModifiedCount(Context->NvramManager) > 0;
 }
 
 /**
