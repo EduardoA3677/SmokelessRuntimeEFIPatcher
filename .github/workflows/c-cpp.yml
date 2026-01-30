@@ -12,24 +12,56 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-    - name: Install Missing Tools
-      run: sudo apt install nasm
-    - uses: actions/checkout@v5
+    - name: Install Build Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          gcc-11 \
+          g++-11 \
+          nasm \
+          uuid-dev \
+          python3 \
+          python3-distutils \
+          git \
+          acpica-tools
+        sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 100
+        sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-11 100
+        gcc --version
+        python3 --version
+        
+    - name: Checkout EDK2
+      uses: actions/checkout@v4
       with:
         repository: tianocore/edk2
         ref: 'edk2-stable202205'
-        submodules : true
+        submodules: true
         path: edk2
-    - uses: actions/checkout@v5
+        
+    - name: Checkout Project
+      uses: actions/checkout@v4
       with:
         path: edk2/SmokelessRuntimeEFIPatcher
+        
+    - name: Setup EDK2 Environment
+      working-directory: edk2
+      run: |
+        git submodule update --init --recursive
+        
     - name: Build Base Tools
       working-directory: edk2
-      run: make -C BaseTools
-    - name: Build
+      run: |
+        make -C BaseTools -j$(nproc)
+        
+    - name: Build SREP
       working-directory: edk2
-      run: "source edksetup.sh && build -b RELEASE -t GCC5 -p SmokelessRuntimeEFIPatcher/SmokelessRuntimeEFIPatcher.dsc -a X64 -s"
-    - uses: actions/upload-artifact@v6
+      run: |
+        source edksetup.sh
+        build -b RELEASE -t GCC5 -p SmokelessRuntimeEFIPatcher/SmokelessRuntimeEFIPatcher.dsc -a X64 -n $(nproc)
+        
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
       with:
-        name: "SREP"
+        name: "SmokelessRuntimeEFIPatcher-${{ github.sha }}"
         path: edk2/Build/SmokelessRuntimeEFIPatcher/RELEASE_GCC5/X64/SmokelessRuntimeEFIPatcher.efi
+        if-no-files-found: error

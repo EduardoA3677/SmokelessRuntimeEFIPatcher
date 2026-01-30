@@ -1,3 +1,33 @@
-edk2/
+# EDK2 Build outputs
 Build/
+build/
+*.efi
+*.lib
+*.a
+*.o
+*.obj
+*.d
+
+# Logs
 *.log
+*.tmp
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.bak
+*.orig
+*.rej
+
+# Test artifacts
+test_results/
+coverage/

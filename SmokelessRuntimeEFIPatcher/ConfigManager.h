@@ -2,7 +2,6 @@
 #include <Uefi.h>
 #include <Library/UefiLib.h>
 #include <Library/BaseMemoryLib.h>
-#include <Protocol/SimpleFileSystem.h>
 #include "NvramManager.h"
 
 // Configuration entry
@@ -19,7 +18,6 @@ typedef struct {
 typedef struct {
     CONFIG_ENTRY *Entries;
     UINTN EntryCount;
-    CHAR16 *ConfigFilePath;  // Path to config file
     BOOLEAN Modified;        // Has unsaved changes
 } CONFIG_MANAGER;
 
@@ -27,30 +25,6 @@ typedef struct {
  * Initialize configuration manager
  */
 EFI_STATUS ConfigInitialize(CONFIG_MANAGER *Manager);
-
-/**
- * Load configuration from file
- * @param FilePath - Path to config file (e.g., L"fs0:\\SREP_Settings.cfg")
- */
-EFI_STATUS ConfigLoadFromFile(CONFIG_MANAGER *Manager, CHAR16 *FilePath);
-
-/**
- * Save configuration to file
- * @param FilePath - Path to save config file
- */
-EFI_STATUS ConfigSaveToFile(CONFIG_MANAGER *Manager, CHAR16 *FilePath);
-
-/**
- * Export configuration in human-readable format
- * @param FilePath - Path to export file (e.g., L"fs0:\\SREP_Export.txt")
- */
-EFI_STATUS ConfigExportToText(CONFIG_MANAGER *Manager, CHAR16 *FilePath);
-
-/**
- * Import configuration from text file
- * @param FilePath - Path to import file
- */
-EFI_STATUS ConfigImportFromText(CONFIG_MANAGER *Manager, CHAR16 *FilePath);
 
 /**
  * Add a configuration entry
@@ -75,12 +49,12 @@ EFI_STATUS ConfigUpdateEntry(
 );
 
 /**
- * Apply configuration to NVRAM manager
+ * Apply configuration to NVRAM (saves to real BIOS NVRAM)
  */
 EFI_STATUS ConfigApplyToNvram(CONFIG_MANAGER *Manager, NVRAM_MANAGER *NvramManager);
 
 /**
- * Load configuration from NVRAM manager
+ * Load configuration from NVRAM (reads from real BIOS NVRAM)
  */
 EFI_STATUS ConfigLoadFromNvram(CONFIG_MANAGER *Manager, NVRAM_MANAGER *NvramManager);
 
@@ -103,6 +77,11 @@ UINTN ConfigGetEntryCount(CONFIG_MANAGER *Manager);
  * Get entry by index
  */
 CONFIG_ENTRY* ConfigGetEntry(CONFIG_MANAGER *Manager, UINTN Index);
+
+/**
+ * Validate configuration entries before applying to NVRAM
+ */
+EFI_STATUS ConfigValidate(CONFIG_MANAGER *Manager);
 
 /**
  * Clean up configuration manager

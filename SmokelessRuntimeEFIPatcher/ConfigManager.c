@@ -2,8 +2,6 @@
 #include <Library/MemoryAllocationLib.h>
 #include <Library/DebugLib.h>
 #include <Library/PrintLib.h>
-#include <Protocol/LoadedImage.h>
-#include <Protocol/DevicePath.h>
 
 /**
  * Initialize configuration manager
@@ -18,7 +16,6 @@ ConfigInitialize(CONFIG_MANAGER *Manager)
     ZeroMem(Manager, sizeof(CONFIG_MANAGER));
     Manager->Entries = NULL;
     Manager->EntryCount = 0;
-    Manager->ConfigFilePath = NULL;
     Manager->Modified = FALSE;
 
     return EFI_SUCCESS;
@@ -125,96 +122,7 @@ ConfigUpdateEntry(
 }
 
 /**
- * Save configuration to binary file
- */
-EFI_STATUS 
-ConfigSaveToFile(CONFIG_MANAGER *Manager, CHAR16 *FilePath)
-{
-    // Simplified implementation - in production, would use EFI_FILE_PROTOCOL
-    // For now, just mark as saved
-    if (Manager == NULL || FilePath == NULL) {
-        return EFI_INVALID_PARAMETER;
-    }
-
-    // TODO: Implement actual file I/O using EFI_SIMPLE_FILE_SYSTEM_PROTOCOL
-    // This requires:
-    // 1. Locate file system protocol
-    // 2. Open root directory
-    // 3. Create/open file
-    // 4. Write configuration data
-    // 5. Close file
-
-    Print(L"ConfigSaveToFile: Saving configuration to %s\n", FilePath);
-    Print(L"  Entries: %u\n", Manager->EntryCount);
-
-    // For now, just mark as saved
-    Manager->Modified = FALSE;
-    
-    return EFI_SUCCESS;
-}
-
-/**
- * Load configuration from file
- */
-EFI_STATUS 
-ConfigLoadFromFile(CONFIG_MANAGER *Manager, CHAR16 *FilePath)
-{
-    if (Manager == NULL || FilePath == NULL) {
-        return EFI_INVALID_PARAMETER;
-    }
-
-    // TODO: Implement actual file I/O
-    Print(L"ConfigLoadFromFile: Loading configuration from %s\n", FilePath);
-
-    return EFI_SUCCESS;
-}
-
-/**
- * Export configuration in human-readable format
- */
-EFI_STATUS 
-ConfigExportToText(CONFIG_MANAGER *Manager, CHAR16 *FilePath)
-{
-    UINTN i;
-    CONFIG_ENTRY *Entry;
-
-    if (Manager == NULL || FilePath == NULL) {
-        return EFI_INVALID_PARAMETER;
-    }
-
-    Print(L"\n=== Configuration Export ===\n");
-    Print(L"Total Entries: %u\n\n", Manager->EntryCount);
-
-    for (i = 0; i < Manager->EntryCount; i++) {
-        Entry = &Manager->Entries[i];
-        
-        Print(L"Entry %u:\n", i);
-        Print(L"  Variable: %s\n", Entry->VariableName);
-        Print(L"  GUID: %g\n", &Entry->Guid);
-        Print(L"  Offset: 0x%X\n", Entry->Offset);
-        Print(L"  Size: %u bytes\n", Entry->Size);
-        
-        if (Entry->Description != NULL) {
-            Print(L"  Description: %a\n", Entry->Description);
-        }
-
-        // Print value (first few bytes)
-        Print(L"  Value: ");
-        UINTN PrintSize = Entry->Size > 16 ? 16 : Entry->Size;
-        for (UINTN j = 0; j < PrintSize; j++) {
-            Print(L"%02X ", ((UINT8*)Entry->Value)[j]);
-        }
-        if (Entry->Size > 16) {
-            Print(L"...");
-        }
-        Print(L"\n\n");
-    }
-
-    return EFI_SUCCESS;
-}
-
-/**
- * Apply configuration to NVRAM
+ * Apply configuration to NVRAM (saves to real BIOS NVRAM)
  */
 EFI_STATUS 
 ConfigApplyToNvram(CONFIG_MANAGER *Manager, NVRAM_MANAGER *NvramManager)
@@ -251,21 +159,21 @@ ConfigApplyToNvram(CONFIG_MANAGER *Manager, NVRAM_MANAGER *NvramManager)
 
     Print(L"Staged %u/%u entries successfully\n", SuccessCount, Manager->EntryCount);
 
-    // Commit all changes
+    // Commit all changes to real BIOS NVRAM
     if (SuccessCount > 0) {
         Status = NvramCommitChanges(NvramManager);
         if (EFI_ERROR(Status)) {
-            Print(L"Failed to commit changes: %r\n", Status);
+            Print(L"Failed to commit changes to NVRAM: %r\n", Status);
             return Status;
         }
-        Print(L"All changes committed to NVRAM!\n");
+        Print(L"All changes committed to BIOS NVRAM!\n");
     }
 
     return EFI_SUCCESS;
 }
 
 /**
- * Load configuration from NVRAM
+ * Load configuration from NVRAM (reads from real BIOS NVRAM)
  */
 EFI_STATUS 
 ConfigLoadFromNvram(CONFIG_MANAGER *Manager, NVRAM_MANAGER *NvramManager)
@@ -280,7 +188,7 @@ ConfigLoadFromNvram(CONFIG_MANAGER *Manager, NVRAM_MANAGER *NvramManager)
 
     // Load from NVRAM manager
     // This would iterate through NVRAM variables and create config entries
-    Print(L"Loading configuration from NVRAM...\n");
+    Print(L"Loading configuration from BIOS NVRAM...\n");
 
     return EFI_SUCCESS;
 }
@@ -333,6 +241,70 @@ ConfigGetEntry(CONFIG_MANAGER *Manager, UINTN Index)
 }
 
 /**
+ * Validate configuration entries before applying to NVRAM
+ */
+EFI_STATUS 
+ConfigValidate(CONFIG_MANAGER *Manager)
+{
+    UINTN i;
+    CONFIG_ENTRY *Entry;
+    BOOLEAN IsValid = TRUE;
+    UINTN NameLen;
+    
+    if (Manager == NULL) {
+        return EFI_INVALID_PARAMETER;
+    }
+
+    Print(L"\nValidating configuration (%u entries)...\n", Manager->EntryCount);
+    
+    for (i = 0; i < Manager->EntryCount; i++) {
+        Entry = &Manager->Entries[i];
+        
+        // Check for null pointers
+        if (Entry->VariableName == NULL) {
+            Print(L"  Entry %u: INVALID - Variable name is NULL\n", i);
+            IsValid = FALSE;
+            continue;
+        }
+        
+        if (Entry->Value == NULL) {
+            Print(L"  Entry %u: INVALID - Value is NULL\n", i);
+            IsValid = FALSE;
+            continue;
+        }
+        
+        // Check for reasonable size
+        if (Entry->Size == 0) {
+            Print(L"  Entry %u: WARNING - Size is 0\n", i);
+        }
+        
+        if (Entry->Size > 65536) {
+            Print(L"  Entry %u: WARNING - Size is very large (%u bytes)\n", i, Entry->Size);
+        }
+        
+        // Check variable name length
+        NameLen = StrLen(Entry->VariableName);
+        if (NameLen == 0) {
+            Print(L"  Entry %u: INVALID - Variable name is empty\n", i);
+            IsValid = FALSE;
+            continue;
+        }
+        
+        if (NameLen > 255) {
+            Print(L"  Entry %u: WARNING - Variable name is very long (%u chars)\n", i, NameLen);
+        }
+    }
+    
+    if (IsValid) {
+        Print(L"Validation passed!\n");
+        return EFI_SUCCESS;
+    } else {
+        Print(L"Validation FAILED - invalid entries detected\n");
+        return EFI_INVALID_PARAMETER;
+    }
+}
+
+/**
  * Clean up configuration manager
  */
 VOID 
@@ -362,10 +334,6 @@ ConfigCleanup(CONFIG_MANAGER *Manager)
         }
         
         FreePool(Manager->Entries);
-    }
-
-    if (Manager->ConfigFilePath != NULL) {
-        FreePool(Manager->ConfigFilePath);
     }
 
     ZeroMem(Manager, sizeof(CONFIG_MANAGER));

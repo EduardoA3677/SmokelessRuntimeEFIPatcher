@@ -226,8 +226,17 @@ EFI_STATUS AutoPatchBios(EFI_HANDLE ImageHandle, BIOS_INFO *BiosInfo)
     switch (BiosInfo->Type)
     {
     case BIOS_TYPE_AMI:
-    case BIOS_TYPE_AMI_HP_CUSTOM:
         Status = PatchAmiBios(ImageHandle, BiosInfo);
+        break;
+
+    case BIOS_TYPE_AMI_HP_CUSTOM:
+        // HP customized AMI needs special handling
+        Status = PatchAmiBios(ImageHandle, BiosInfo);
+        if (!EFI_ERROR(Status))
+        {
+            // Apply HP-specific patches on top
+            Status = PatchHpAmiBios(ImageHandle, BiosInfo);
+        }
         break;
 
     case BIOS_TYPE_INSYDE:
@@ -615,4 +624,260 @@ UINTN DisableWriteProtections(VOID *ImageBase, UINTN ImageSize)
     }
 
     return PatchCount;
+}
+
+/**
+ * Patch HP-specific AMI BIOS structures
+ * HP uses additional protections and custom form hiding
+ */
+EFI_STATUS 
+PatchHpAmiBios(EFI_HANDLE ImageHandle, BIOS_INFO *BiosInfo)
+{
+    EFI_STATUS Status;
+    EFI_LOADED_IMAGE_PROTOCOL *ImageInfo = NULL;
+    UINTN FormsUnlocked = 0;
+    
+    Print(L"\n=== HP AMI BIOS Specific Patching ===\n");
+    AsciiSPrint(Log, 512, "Applying HP-specific patches...\n\r");
+    LogToFile(LogFile, Log);
+    
+    // Try to find HPSetupData or NewHPSetupData module
+    Status = FindLoadedImageFromName(ImageHandle, "HPSetupData", &ImageInfo);
+    if (!EFI_ERROR(Status) && ImageInfo != NULL)
+    {
+        Print(L"Found HPSetupData module at 0x%p\n", ImageInfo->ImageBase);
+        
+        // Unlock forms in HP Setup Data
+        FormsUnlocked += UnlockHiddenForms(
+            ImageInfo->ImageBase,
+            ImageInfo->ImageSize,
+            BiosInfo
+        );
+    }
+    
+    // Also try NewHPSetupData
+    Status = FindLoadedImageFromName(ImageHandle, "NewHPSetupData", &ImageInfo);
+    if (!EFI_ERROR(Status) && ImageInfo != NULL)
+    {
+        Print(L"Found NewHPSetupData module at 0x%p\n", ImageInfo->ImageBase);
+        
+        FormsUnlocked += UnlockHiddenForms(
+            ImageInfo->ImageBase,
+            ImageInfo->ImageSize,
+            BiosInfo
+        );
+    }
+    
+    // Try AMITSESetup (HP uses customized AMI TSE)
+    Status = FindLoadedImageFromName(ImageHandle, "AMITSESetup", &ImageInfo);
+    if (!EFI_ERROR(Status) && ImageInfo != NULL)
+    {
+        Print(L"Found AMITSESetup module at 0x%p\n", ImageInfo->ImageBase);
+        
+        // Disable write protections
+        DisableWriteProtections(ImageInfo->ImageBase, ImageInfo->ImageSize);
+        
+        // Unlock forms
+        FormsUnlocked += UnlockHiddenForms(
+            ImageInfo->ImageBase,
+            ImageInfo->ImageSize,
+            BiosInfo
+        );
+    }
+    
+    Print(L"HP AMI patching complete: %u forms unlocked\n", FormsUnlocked);
+    AsciiSPrint(Log, 512, "HP AMI patching complete: %u forms unlocked\n\r", FormsUnlocked);
+    LogToFile(LogFile, Log);
+    
+    return EFI_SUCCESS;
+}
+
+/**
+ * Unlock hidden forms by patching visibility flags
+ * Searches for form visibility structures and enables them
+ */
+UINTN 
+UnlockHiddenForms(VOID *ImageBase, UINTN ImageSize, BIOS_INFO *BiosInfo)
+{
+    UINT8 *Data = (UINT8 *)ImageBase;
+    UINTN UnlockCount = 0;
+    UINTN i, j;
+    UINT32 *VisibilityFlag;
+    BOOLEAN LooksLikeGuid;
+    UINT8 ZeroCount, FFCount;
+    
+    if (ImageBase == NULL || ImageSize == 0)
+    {
+        return 0;
+    }
+    
+    // Pattern 1: AMI form suppression (suppressif TRUE)
+    // Look for: 0x0A 0x82 (SUPPRESSIF opcode) followed by condition
+    for (i = 0; i < ImageSize - 10; i++)
+    {
+        // SUPPRESSIF opcode (0x0A) with TRUE condition
+        if (Data[i] == 0x0A && Data[i + 1] == 0x82)
+        {
+            // Check if this is a TRUE condition (0x46)
+            if (Data[i + 2] == 0x46 || Data[i + 3] == 0x46)
+            {
+                // Replace with FALSE condition (0x47) or remove suppressif
+                // Convert SUPPRESSIF TRUE to SUPPRESSIF FALSE
+                for (j = 0; j < 4 && (i + j) < ImageSize; j++)
+                {
+                    if (Data[i + j] == 0x46)
+                    {
+                        Data[i + j] = 0x47;  // TRUE -> FALSE
+                        UnlockCount++;
+                        break;
+                    }
+                }
+            }
+        }
+        
+        // GRAYOUTIF opcode (0x19)
+        if (Data[i] == 0x19 && i + 3 < ImageSize)
+        {
+            if (Data[i + 2] == 0x46)
+            {
+                Data[i + 2] = 0x47;  // TRUE -> FALSE
+                UnlockCount++;
+            }
+        }
+        
+        // DISABLEIF opcode (0x1E)
+        if (Data[i] == 0x1E && i + 3 < ImageSize)
+        {
+            if (Data[i + 2] == 0x46)
+            {
+                Data[i + 2] = 0x47;  // TRUE -> FALSE
+                UnlockCount++;
+            }
+        }
+    }
+    
+    // Pattern 2: HP-specific form visibility flags
+    // HP uses a different structure for form visibility
+    // Search for patterns like: [GUID][uint32 visibility flag]
+    // When flag is 0x00000000, form is hidden
+    for (i = 0; i < ImageSize - 20; i++)
+    {
+        // Look for GUID pattern followed by 0x00000000 (hidden flag)
+        // GUIDs have specific structure, we can detect them
+        if (i + 20 < ImageSize)
+        {
+            // Check if next 4 bytes after potential GUID (16 bytes) are 0x00000000
+            VisibilityFlag = (UINT32 *)&Data[i + 16];
+            
+            // If we find a 0x00000000 flag that looks like a visibility control
+            // we can try changing it to 0x01000000 (visible)
+            // This is a heuristic and should be used carefully
+            if (*VisibilityFlag == 0x00000000)
+            {
+                // Verify this looks like a form structure
+                // Check for GUID-like pattern (not all zeros, not all FFs)
+                LooksLikeGuid = FALSE;
+                ZeroCount = 0;
+                FFCount = 0;
+                
+                for (j = 0; j < 16; j++)
+                {
+                    if (Data[i + j] == 0x00) ZeroCount++;
+                    if (Data[i + j] == 0xFF) FFCount++;
+                }
+                
+                // GUID should have mix of values
+                if (ZeroCount < 14 && FFCount < 14)
+                {
+                    LooksLikeGuid = TRUE;
+                }
+                
+                if (LooksLikeGuid)
+                {
+                    // Enable this form
+                    *VisibilityFlag = 0x01000000;
+                    UnlockCount++;
+                }
+            }
+        }
+    }
+    
+    return UnlockCount;
+}
+
+/**
+ * Save patched values to BIOS data structures
+ * This writes directly to in-memory structures, not NVRAM
+ */
+EFI_STATUS 
+PatchBiosData(
+    VOID *ImageBase,
+    UINTN ImageSize,
+    CHAR16 *VarName,
+    UINTN Offset,
+    VOID *Value,
+    UINTN ValueSize
+)
+{
+    UINT8 *Data = (UINT8 *)ImageBase;
+    CHAR8 AsciiVarName[128];
+    UINTN VarNameLen;
+    UINTN MatchCount = 0;
+    
+    if (ImageBase == NULL || VarName == NULL || Value == NULL)
+    {
+        return EFI_INVALID_PARAMETER;
+    }
+    
+    if (ImageSize == 0 || ValueSize == 0)
+    {
+        return EFI_INVALID_PARAMETER;
+    }
+    
+    // Convert variable name to ASCII for searching
+    VarNameLen = StrLen(VarName);
+    if (VarNameLen >= sizeof(AsciiVarName))
+    {
+        return EFI_INVALID_PARAMETER;
+    }
+    
+    for (UINTN i = 0; i < VarNameLen; i++)
+    {
+        AsciiVarName[i] = (CHAR8)VarName[i];
+    }
+    AsciiVarName[VarNameLen] = 0;
+    
+    Print(L"Searching for variable '%s' in BIOS data...\n", VarName);
+    
+    // Search for variable name in the image
+    for (UINTN i = 0; i < ImageSize - VarNameLen; i++)
+    {
+        if (CompareMem(&Data[i], AsciiVarName, VarNameLen) == 0)
+        {
+            Print(L"Found variable reference at offset 0x%X\n", i);
+            MatchCount++;
+            
+            // Check if we can apply the patch at the specified offset
+            if (i + Offset + ValueSize <= ImageSize)
+            {
+                Print(L"Patching %u bytes at offset 0x%X + 0x%X\n", 
+                      ValueSize, i, Offset);
+                
+                // Apply the patch
+                CopyMem(&Data[i + Offset], Value, ValueSize);
+                
+                Print(L"Patch applied successfully\n");
+                return EFI_SUCCESS;
+            }
+        }
+    }
+    
+    if (MatchCount == 0)
+    {
+        Print(L"Variable '%s' not found in BIOS data\n", VarName);
+        return EFI_NOT_FOUND;
+    }
+    
+    Print(L"Found variable but could not apply patch at specified offset\n");
+    return EFI_INVALID_PARAMETER;
 }

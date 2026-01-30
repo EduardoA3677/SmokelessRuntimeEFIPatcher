@@ -11,28 +11,64 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-    - name: Install Missing Tools
-      run: sudo apt install nasm
-    - uses: actions/checkout@v3
+    - name: Install Build Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          gcc-11 \
+          g++-11 \
+          nasm \
+          uuid-dev \
+          python3 \
+          python3-distutils \
+          git \
+          acpica-tools \
+          zip
+        sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 100
+        sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-11 100
+        gcc --version
+        python3 --version
+        
+    - name: Checkout EDK2
+      uses: actions/checkout@v4
       with:
         repository: tianocore/edk2
         ref: 'edk2-stable202205'
-        submodules : true
+        submodules: true
         path: edk2
-    - uses: actions/checkout@v3
+        
+    - name: Checkout Project
+      uses: actions/checkout@v4
       with:
         path: edk2/SmokelessRuntimeEFIPatcher
+        
+    - name: Setup EDK2 Environment
+      working-directory: edk2
+      run: |
+        git submodule update --init --recursive
+        
     - name: Build Base Tools
       working-directory: edk2
-      run: make -C BaseTools
-    - name: Build
+      run: |
+        make -C BaseTools -j$(nproc)
+        
+    - name: Build SREP
       working-directory: edk2
-      run: "source edksetup.sh && build -b RELEASE -t GCC5 -p SmokelessRuntimeEFIPatcher/SmokelessRuntimeEFIPatcher.dsc -a X64 -s"
+      run: |
+        source edksetup.sh
+        build -b RELEASE -t GCC5 -p SmokelessRuntimeEFIPatcher/SmokelessRuntimeEFIPatcher.dsc -a X64 -n $(nproc)
+        
     - name: Pack For Release
       working-directory: edk2/Build/SmokelessRuntimeEFIPatcher/RELEASE_GCC5/X64/
-      run: "mkdir -p EFI/BOOT && cp SmokelessRuntimeEFIPatcher.efi  EFI/BOOT/BOOTX64.efi && zip SREP.zip -r EFI/"
-    - name: Release
+      run: |
+        mkdir -p EFI/BOOT
+        cp SmokelessRuntimeEFIPatcher.efi EFI/BOOT/BOOTX64.efi
+        zip -r SREP-${{ github.ref_name }}.zip EFI/
+        
+    - name: Create Release
       uses: softprops/action-gh-release@v1
       with:
-        draft: true
-        files: edk2/Build/SmokelessRuntimeEFIPatcher/RELEASE_GCC5/X64/SREP.zip
+        draft: false
+        files: edk2/Build/SmokelessRuntimeEFIPatcher/RELEASE_GCC5/X64/SREP-${{ github.ref_name }}.zip
+        generate_release_notes: true
