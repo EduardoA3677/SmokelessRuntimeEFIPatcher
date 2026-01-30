@@ -63,64 +63,48 @@ EFI_STATUS ParseIfrData(VOID *ImageBase, UINTN ImageSize, IFR_PATCH **PatchList)
                     OpHeader->OpCode == EFI_IFR_GRAY_OUT_IF_OP ||
                     OpHeader->OpCode == EFI_IFR_DISABLE_IF_OP)
                 {
-                    // Create a patch entry
-                    IFR_PATCH *Patch = AllocateZeroPool(sizeof(IFR_PATCH));
-                    if (Patch != NULL)
+                    AsciiSPrint(Log, 512, "Found hideable element at 0x%x (opcode: 0x%02x)\n\r", 
+                               IfrOffset, OpHeader->OpCode);
+                    LogToFile(LogFile, Log);
+
+                    // Strategy: Patch the condition following these opcodes
+                    // Look at the next opcode to see what condition it is
+                    UINTN NextOffset = IfrOffset + OpHeader->Length;
+                    if (NextOffset < IfrEnd - 2)
                     {
-                        Patch->Offset = IfrOffset;
-                        Patch->OriginalOpCode = OpHeader->OpCode;
+                        EFI_IFR_OP_HEADER *NextOp = (EFI_IFR_OP_HEADER *)&Data[NextOffset];
                         
-                        // Strategy: Look ahead to see what condition follows
-                        // If it's followed by a simple condition, we can patch the condition
-                        // to always be FALSE (so suppress/grayout never triggers)
-                        UINTN NextOffset = IfrOffset + OpHeader->Length;
-                        if (NextOffset < IfrEnd - 2)
+                        // Create a patch to change the condition to FALSE
+                        // This way, the suppress/grayout/disable will never trigger
+                        IFR_PATCH *Patch = AllocateZeroPool(sizeof(IFR_PATCH));
+                        if (Patch != NULL)
                         {
-                            EFI_IFR_OP_HEADER *NextOp = (EFI_IFR_OP_HEADER *)&Data[NextOffset];
+                            Patch->Offset = NextOffset;
+                            Patch->OriginalOpCode = NextOp->OpCode;
+                            Patch->NewOpCode = EFI_IFR_FALSE_OP;
                             
-                            // Patch the condition to FALSE so the suppress/grayout never activates
-                            if (NextOp->OpCode == EFI_IFR_TRUE_OP ||
-                                NextOp->OpCode == EFI_IFR_EQ_ID_VAL_OP ||
-                                NextOp->OpCode == EFI_IFR_EQ_ID_ID_OP ||
-                                NextOp->OpCode == EFI_IFR_NOT_OP)
+                            if (OpHeader->OpCode == EFI_IFR_SUPPRESS_IF_OP)
+                                UnicodeSPrint(Patch->Description, sizeof(Patch->Description), 
+                                            L"Patch SuppressIf condition at 0x%x", NextOffset);
+                            else if (OpHeader->OpCode == EFI_IFR_GRAY_OUT_IF_OP)
+                                UnicodeSPrint(Patch->Description, sizeof(Patch->Description), 
+                                            L"Patch GrayoutIf condition at 0x%x", NextOffset);
+                            else
+                                UnicodeSPrint(Patch->Description, sizeof(Patch->Description), 
+                                            L"Patch DisableIf condition at 0x%x", NextOffset);
+
+                            // Add to linked list
+                            if (Head == NULL)
                             {
-                                Patch->Offset = NextOffset;
-                                Patch->OriginalOpCode = NextOp->OpCode;
-                                Patch->NewOpCode = EFI_IFR_FALSE_OP;
-                                
-                                if (OpHeader->OpCode == EFI_IFR_SUPPRESS_IF_OP)
-                                    UnicodeSPrint(Patch->Description, sizeof(Patch->Description), 
-                                                L"Patch SuppressIf at 0x%x", IfrOffset);
-                                else if (OpHeader->OpCode == EFI_IFR_GRAY_OUT_IF_OP)
-                                    UnicodeSPrint(Patch->Description, sizeof(Patch->Description), 
-                                                L"Patch GrayoutIf at 0x%x", IfrOffset);
-                                else
-                                    UnicodeSPrint(Patch->Description, sizeof(Patch->Description), 
-                                                L"Patch DisableIf at 0x%x", IfrOffset);
-
-                                // Add to linked list
-                                if (Head == NULL)
-                                {
-                                    Head = Patch;
-                                    Current = Patch;
-                                }
-                                else
-                                {
-                                    Current->Next = Patch;
-                                    Current = Patch;
-                                }
-                                PatchCount++;
-
-                                AsciiSPrint(Log, 512, "Found hideable element at 0x%x (opcode: 0x%02x)\n\r", 
-                                           IfrOffset, OpHeader->OpCode);
-                                LogToFile(LogFile, Log);
+                                Head = Patch;
+                                Current = Patch;
                             }
-                        }
-                        
-                        if (Patch->Offset == IfrOffset)
-                        {
-                            // Couldn't create a useful patch, free it
-                            FreePool(Patch);
+                            else
+                            {
+                                Current->Next = Patch;
+                                Current = Patch;
+                            }
+                            PatchCount++;
                         }
                     }
                 }
@@ -135,7 +119,7 @@ EFI_STATUS ParseIfrData(VOID *ImageBase, UINTN ImageSize, IFR_PATCH **PatchList)
     }
 
     *PatchList = Head;
-    AsciiSPrint(Log, 512, "IFR parsing complete. Found %d potential patches.\n\r", PatchCount);
+    AsciiSPrint(Log, 512, "IFR parsing complete. Found %d patches to apply.\n\r", PatchCount);
     LogToFile(LogFile, Log);
 
     return PatchCount > 0 ? EFI_SUCCESS : EFI_NOT_FOUND;

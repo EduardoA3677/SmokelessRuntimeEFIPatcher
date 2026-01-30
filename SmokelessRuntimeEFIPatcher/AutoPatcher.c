@@ -394,123 +394,59 @@ EFI_STATUS ExecuteSetupBrowser(EFI_HANDLE ImageHandle, BIOS_INFO *BiosInfo)
     EFI_LOADED_IMAGE_PROTOCOL *ImageInfo = NULL;
     EFI_HANDLE AppImageHandle = NULL;
     CHAR8 SetupName[128];
-    EFI_FORM_BROWSER2_PROTOCOL *FormBrowser2;
+    EFI_FORM_BROWSER2_PROTOCOL *FormBrowser2 = NULL;
 
     UnicodeStrToAsciiStrS(BiosInfo->SetupModuleName, SetupName, sizeof(SetupName));
 
-    AsciiSPrint(Log, 512, "Attempting to launch Setup Browser...\n\r");
+    AsciiSPrint(Log, 512, "\n=== Launching Setup Browser ===\n\r");
     LogToFile(LogFile, Log);
+    Print(L"\n\r=== Launching Setup Browser ===\n\r");
 
-    // Method 1: Try to use FormBrowser2 Protocol directly
-    Status = gBS->LocateProtocol(&gEfiFormBrowser2ProtocolGuid, NULL, (VOID **)&FormBrowser2);
-    if (!EFI_ERROR(Status) && FormBrowser2 != NULL)
-    {
-        AsciiSPrint(Log, 512, "Found FormBrowser2 Protocol, launching Setup UI...\n\r");
-        LogToFile(LogFile, Log);
-        
-        Print(L"\n\rLaunching BIOS Setup using FormBrowser2 Protocol...\n\r");
-        
-        // SendForm is the standard way to launch the Setup browser
-        // It will display all registered HII forms
-        Status = FormBrowser2->SendForm(
-            FormBrowser2,
-            NULL,           // HiiHandles (NULL = show all)
-            0,              // HandleCount
-            NULL,           // FormSetGuid (NULL = show all)
-            0,              // FormId
-            NULL,           // ScreenDimensions
-            NULL            // ActionRequest
-        );
-        
-        AsciiSPrint(Log, 512, "FormBrowser2->SendForm returned: %r\n\r", Status);
-        LogToFile(LogFile, Log);
-        
-        // After FormBrowser returns, prevent boot
-        Print(L"\n\rSetup UI completed. System will not boot to OS.\n\r");
-        Print(L"Press Ctrl+Alt+Del to restart, or power off the system.\n\r");
-        
-        AsciiSPrint(Log, 512, "Preventing boot to OS - entering infinite loop\n\r");
-        LogToFile(LogFile, Log);
-        
-        if (LogFile != NULL)
-        {
-            LogFile->Close(LogFile);
-            LogFile = NULL;
-        }
-        
-        while (TRUE)
-        {
-            gBS->Stall(1000000);
-        }
-        
-        return Status;
-    }
-
-    // Method 2: Try to load and execute Setup module directly
-    AsciiSPrint(Log, 512, "FormBrowser2 Protocol not found, loading Setup module: %a\n\r", SetupName);
+    // Step 1: Load the Setup module first (this registers HII forms)
+    AsciiSPrint(Log, 512, "Loading Setup module: %a\n\r", SetupName);
     LogToFile(LogFile, Log);
+    Print(L"Loading Setup module: %a\n\r", SetupName);
 
-    // Try to load Setup from Firmware Volume
     Status = LoadFV(ImageHandle, SetupName, &ImageInfo, &AppImageHandle, EFI_SECTION_PE32);
     
     if (EFI_ERROR(Status))
     {
-        AsciiSPrint(Log, 512, "Failed to load Setup from FV: %r\n\r", Status);
+        AsciiSPrint(Log, 512, "Failed to load %a, trying alternate name: Setup\n\r", SetupName);
         LogToFile(LogFile, Log);
         
-        // Try alternate names
         if (BiosInfo->Type == BIOS_TYPE_INSYDE)
         {
-            AsciiSPrint(Log, 512, "Trying alternate name: SetupUtilityApp\n\r");
-            LogToFile(LogFile, Log);
             Status = LoadFV(ImageHandle, "SetupUtilityApp", &ImageInfo, &AppImageHandle, EFI_SECTION_PE32);
         }
         else
         {
-            AsciiSPrint(Log, 512, "Trying alternate name: Setup\n\r");
-            LogToFile(LogFile, Log);
             Status = LoadFV(ImageHandle, "Setup", &ImageInfo, &AppImageHandle, EFI_SECTION_PE32);
         }
     }
 
     if (EFI_ERROR(Status))
     {
-        AsciiSPrint(Log, 512, "Could not load Setup module: %r\n\r", Status);
+        AsciiSPrint(Log, 512, "ERROR: Could not load Setup module: %r\n\r", Status);
         LogToFile(LogFile, Log);
+        Print(L"ERROR: Could not load Setup module: %r\n\r", Status);
+        Print(L"System will not boot to OS. Press Ctrl+Alt+Del to restart.\n\r");
         
-        // If we can't load Setup, wait indefinitely
-        AsciiSPrint(Log, 512, "Setup module not found, trying FormBrowser2 again...\n\r");
-        LogToFile(LogFile, Log);
-        
-        // Try FormBrowser2 one more time in case it was just registered
-        Status = gBS->LocateProtocol(&gEfiFormBrowser2ProtocolGuid, NULL, (VOID **)&FormBrowser2);
-        if (!EFI_ERROR(Status))
-        {
-            Print(L"\n\rLaunching BIOS Setup using FormBrowser2 Protocol (retry)...\n\r");
-            Status = FormBrowser2->SendForm(FormBrowser2, NULL, 0, NULL, 0, NULL, NULL);
-        }
-        
-        Print(L"\n\rSetup module not found. System will not boot to OS.\n\r");
-        Print(L"Press Ctrl+Alt+Del to restart.\n\r");
-        
-        if (LogFile != NULL)
-        {
-            LogFile->Close(LogFile);
-            LogFile = NULL;
-        }
-        
-        while (TRUE)
-        {
-            gBS->Stall(1000000);
-        }
+        if (LogFile != NULL) LogFile->Close(LogFile);
+        while (TRUE) gBS->Stall(1000000);
         
         return Status;
     }
 
-    AsciiSPrint(Log, 512, "Setup module loaded successfully at 0x%x\n\r", ImageInfo->ImageBase);
+    AsciiSPrint(Log, 512, "Setup module loaded at 0x%x (size: 0x%x)\n\r", 
+               ImageInfo->ImageBase, ImageInfo->ImageSize);
     LogToFile(LogFile, Log);
+    Print(L"Setup module loaded successfully\n\r");
 
-    // Apply patches to Setup module before executing
+    // Step 2: Patch the loaded Setup module
+    AsciiSPrint(Log, 512, "Patching Setup module...\n\r");
+    LogToFile(LogFile, Log);
+    Print(L"Patching Setup module...\n\r");
+
     DisableWriteProtections(ImageInfo->ImageBase, ImageInfo->ImageSize);
     
     if (BiosInfo->Type == BIOS_TYPE_AMI || BiosInfo->Type == BIOS_TYPE_AMI_HP_CUSTOM)
@@ -530,30 +466,61 @@ EFI_STATUS ExecuteSetupBrowser(EFI_HANDLE ImageHandle, BIOS_INFO *BiosInfo)
         FreeIfrPatchList(PatchList);
     }
 
-    // Execute Setup
-    AsciiSPrint(Log, 512, "Executing Setup module...\n\r");
+    // Step 3: Start the Setup module (this will register HII forms)
+    AsciiSPrint(Log, 512, "Starting Setup module to register HII forms...\n\r");
     LogToFile(LogFile, Log);
+    Print(L"Starting Setup module...\n\r");
     
-    Print(L"\n\rLaunching BIOS Setup module...\n\r");
+    Status = gBS->StartImage(AppImageHandle, NULL, NULL);
     
-    Status = Exec(&AppImageHandle);
-    
-    AsciiSPrint(Log, 512, "Setup module returned: %r\n\r", Status);
+    AsciiSPrint(Log, 512, "Setup module StartImage returned: %r\n\r", Status);
     LogToFile(LogFile, Log);
 
-    // After Setup returns, check if FormBrowser2 is now available
+    // Step 4: Now try to use FormBrowser2 Protocol
+    AsciiSPrint(Log, 512, "Locating FormBrowser2 Protocol...\n\r");
+    LogToFile(LogFile, Log);
+    Print(L"Locating FormBrowser2 Protocol...\n\r");
+    
     Status = gBS->LocateProtocol(&gEfiFormBrowser2ProtocolGuid, NULL, (VOID **)&FormBrowser2);
-    if (!EFI_ERROR(Status))
+    if (!EFI_ERROR(Status) && FormBrowser2 != NULL)
     {
-        AsciiSPrint(Log, 512, "FormBrowser2 now available, launching...\n\r");
+        AsciiSPrint(Log, 512, "FormBrowser2 Protocol found! Launching Setup UI...\n\r");
         LogToFile(LogFile, Log);
-        Print(L"\n\rLaunching BIOS Setup using FormBrowser2...\n\r");
-        Status = FormBrowser2->SendForm(FormBrowser2, NULL, 0, NULL, 0, NULL, NULL);
+        Print(L"\n\r*** Launching BIOS Setup UI ***\n\r");
+        Print(L"*** All hidden menus have been unlocked ***\n\r\n\r");
+        
+        // Give a moment for message to display
+        gBS->Stall(2000000);
+        
+        // SendForm will display all registered HII forms
+        Status = FormBrowser2->SendForm(
+            FormBrowser2,
+            NULL,           // HiiHandles (NULL = show all)
+            0,              // HandleCount
+            NULL,           // FormSetGuid (NULL = show all)
+            0,              // FormId
+            NULL,           // ScreenDimensions
+            NULL            // ActionRequest
+        );
+        
+        AsciiSPrint(Log, 512, "FormBrowser2->SendForm returned: %r\n\r", Status);
+        LogToFile(LogFile, Log);
+    }
+    else
+    {
+        AsciiSPrint(Log, 512, "WARNING: FormBrowser2 Protocol not available: %r\n\r", Status);
+        LogToFile(LogFile, Log);
+        Print(L"WARNING: FormBrowser2 Protocol not available\n\r");
+        Print(L"The Setup module was loaded and patched, but UI could not launch.\n\r");
     }
 
-    // After everything, prevent boot
-    Print(L"\n\rSetup UI exited. System will not boot to OS.\n\r");
-    Print(L"Press Ctrl+Alt+Del to restart, or power off the system.\n\r");
+    // Step 5: After everything, prevent boot to OS
+    Print(L"\n\r=====================================\n\r");
+    Print(L"Setup session complete.\n\r");
+    Print(L"Changes are temporary (in RAM only).\n\r");
+    Print(L"System will NOT boot to OS.\n\r");
+    Print(L"Press Ctrl+Alt+Del to restart.\n\r");
+    Print(L"=====================================\n\r");
     
     AsciiSPrint(Log, 512, "Preventing boot to OS - entering infinite loop\n\r");
     LogToFile(LogFile, Log);
@@ -564,12 +531,13 @@ EFI_STATUS ExecuteSetupBrowser(EFI_HANDLE ImageHandle, BIOS_INFO *BiosInfo)
         LogFile = NULL;
     }
     
+    // Infinite loop to prevent OS boot
     while (TRUE)
     {
         gBS->Stall(1000000);
     }
 
-    return Status;
+    return EFI_SUCCESS;
 }
 
 /**
