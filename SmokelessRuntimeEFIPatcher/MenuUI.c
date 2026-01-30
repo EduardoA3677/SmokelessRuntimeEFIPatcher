@@ -46,12 +46,28 @@ EFI_STATUS MenuInitialize(MENU_CONTEXT *Context)
  */
 MENU_PAGE *MenuCreatePage(CHAR16 *Title, UINTN ItemCount)
 {
+    if (Title == NULL || ItemCount == 0)
+        return NULL;
+    
     MENU_PAGE *Page = AllocateZeroPool(sizeof(MENU_PAGE));
     if (Page == NULL)
         return NULL;
     
     Page->Title = AllocateCopyPool(StrSize(Title), Title);
+    if (Page->Title == NULL)
+    {
+        FreePool(Page);
+        return NULL;
+    }
+    
     Page->Items = AllocateZeroPool(sizeof(MENU_ITEM) * ItemCount);
+    if (Page->Items == NULL)
+    {
+        FreePool(Page->Title);
+        FreePool(Page);
+        return NULL;
+    }
+    
     Page->ItemCount = ItemCount;
     Page->SelectedIndex = 0;
     Page->Parent = NULL;
@@ -71,12 +87,15 @@ EFI_STATUS MenuAddActionItem(
     VOID *Data
 )
 {
-    if (Page == NULL || Index >= Page->ItemCount)
+    if (Page == NULL || Index >= Page->ItemCount || Title == NULL)
         return EFI_INVALID_PARAMETER;
     
     MENU_ITEM *Item = &Page->Items[Index];
     Item->Type = MENU_ITEM_ACTION;
     Item->Title = AllocateCopyPool(StrSize(Title), Title);
+    if (Item->Title == NULL)
+        return EFI_OUT_OF_RESOURCES;
+    
     Item->Description = Description ? AllocateCopyPool(StrSize(Description), Description) : NULL;
     Item->Callback = Callback;
     Item->Data = Data;
@@ -97,12 +116,15 @@ EFI_STATUS MenuAddSubmenuItem(
     MENU_PAGE *Submenu
 )
 {
-    if (Page == NULL || Index >= Page->ItemCount || Submenu == NULL)
+    if (Page == NULL || Index >= Page->ItemCount || Submenu == NULL || Title == NULL)
         return EFI_INVALID_PARAMETER;
     
     MENU_ITEM *Item = &Page->Items[Index];
     Item->Type = MENU_ITEM_SUBMENU;
     Item->Title = AllocateCopyPool(StrSize(Title), Title);
+    if (Item->Title == NULL)
+        return EFI_OUT_OF_RESOURCES;
+    
     Item->Description = Description ? AllocateCopyPool(StrSize(Description), Description) : NULL;
     Item->Submenu = Submenu;
     Item->Enabled = TRUE;
@@ -134,12 +156,15 @@ EFI_STATUS MenuAddSeparator(MENU_PAGE *Page, UINTN Index, CHAR16 *Title)
  */
 EFI_STATUS MenuAddInfoItem(MENU_PAGE *Page, UINTN Index, CHAR16 *Title)
 {
-    if (Page == NULL || Index >= Page->ItemCount)
+    if (Page == NULL || Index >= Page->ItemCount || Title == NULL)
         return EFI_INVALID_PARAMETER;
     
     MENU_ITEM *Item = &Page->Items[Index];
     Item->Type = MENU_ITEM_INFO;
     Item->Title = AllocateCopyPool(StrSize(Title), Title);
+    if (Item->Title == NULL)
+        return EFI_OUT_OF_RESOURCES;
+    
     Item->Enabled = FALSE;
     
     return EFI_SUCCESS;

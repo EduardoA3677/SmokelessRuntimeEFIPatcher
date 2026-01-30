@@ -121,13 +121,20 @@ EFI_STATUS HiiBrowserEnumerateForms(HII_BROWSER_CONTEXT *Context)
     
     if (EFI_ERROR(Status))
     {
-        if (HiiHandles)
+        if (HiiHandles != NULL)
             FreePool(HiiHandles);
         return Status;
     }
     
     // Allocate form info array
     Context->Forms = AllocateZeroPool(HandleCount * sizeof(HII_FORM_INFO) * 10); // Estimate 10 forms per handle
+    if (Context->Forms == NULL)
+    {
+        if (HiiHandles != NULL)
+            FreePool(HiiHandles);
+        return EFI_OUT_OF_RESOURCES;
+    }
+    
     Context->FormCount = 0;
     
     // For now, just create placeholder entries for each HII handle
@@ -142,7 +149,8 @@ EFI_STATUS HiiBrowserEnumerateForms(HII_BROWSER_CONTEXT *Context)
         Context->FormCount++;
     }
     
-    if (HiiHandles)
+    // Always free HiiHandles after use
+    if (HiiHandles != NULL)
         FreePool(HiiHandles);
     
     return EFI_SUCCESS;
