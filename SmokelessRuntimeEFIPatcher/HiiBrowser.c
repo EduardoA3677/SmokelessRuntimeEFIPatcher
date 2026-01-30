@@ -1227,13 +1227,20 @@ EFI_STATUS HiiBrowserCallback_EditQuestion(MENU_ITEM *Item, VOID *Context)
         
         if (!EFI_ERROR(Status))
         {
-            // Update the title to show new state
-            CHAR16 NewTitle[256];
-            UnicodeSPrint(NewTitle, sizeof(NewTitle), 
-                         L"%s [%s]%s", Question->Prompt, NewValue ? L"☑" : L"☐",
-                         Question->IsModified ? L" *" : L"");
+            // Free old title and allocate new one
+            if (Item->Title)
+                FreePool((VOID *)Item->Title);
             
-            // Redraw the menu
+            CHAR16 *NewTitle = AllocatePool(256 * sizeof(CHAR16));
+            if (NewTitle)
+            {
+                UnicodeSPrint(NewTitle, 256 * sizeof(CHAR16), 
+                             L"%s [%s]%s", Question->Prompt, NewValue ? L"☑" : L"☐",
+                             Question->IsModified ? L" *" : L"");
+                Item->Title = NewTitle;
+            }
+            
+            // Redraw the menu to show updated value
             MenuDraw(MenuCtx);
         }
         
