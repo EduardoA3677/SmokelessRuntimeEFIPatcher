@@ -109,6 +109,18 @@ UINTN ConfigGetEntryCount(CONFIG_MANAGER *Manager);
 CONFIG_ENTRY* ConfigGetEntry(CONFIG_MANAGER *Manager, UINTN Index);
 
 /**
+ * Create a backup of configuration before applying changes
+ * @param ImageHandle - Handle to the loaded image
+ * @param BackupPath - Path to save backup file
+ */
+EFI_STATUS ConfigCreateBackup(CONFIG_MANAGER *Manager, EFI_HANDLE ImageHandle, CHAR16 *BackupPath);
+
+/**
+ * Validate configuration entries before applying
+ */
+EFI_STATUS ConfigValidate(CONFIG_MANAGER *Manager);
+
+/**
  * Clean up configuration manager
  */
 VOID ConfigCleanup(CONFIG_MANAGER *Manager);

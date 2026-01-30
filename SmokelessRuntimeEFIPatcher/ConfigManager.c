@@ -5,6 +5,7 @@
 #include <Protocol/LoadedImage.h>
 #include <Protocol/DevicePath.h>
 #include <Library/UefiBootServicesTableLib.h>
+#include <Guid/FileInfo.h>
 
 /**
  * Initialize configuration manager
@@ -282,13 +283,110 @@ ConfigSaveToFile(CONFIG_MANAGER *Manager, EFI_HANDLE ImageHandle, CHAR16 *FilePa
 EFI_STATUS 
 ConfigLoadFromFile(CONFIG_MANAGER *Manager, EFI_HANDLE ImageHandle, CHAR16 *FilePath)
 {
+    EFI_STATUS Status;
+    EFI_LOADED_IMAGE_PROTOCOL *LoadedImage;
+    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *FileSystem;
+    EFI_FILE *Root;
+    EFI_FILE *ConfigFile;
+    EFI_FILE_INFO *FileInfo;
+    UINTN FileInfoSize;
+    CHAR8 *FileBuffer;
+    UINTN FileSize;
+
     if (Manager == NULL || FilePath == NULL) {
         return EFI_INVALID_PARAMETER;
     }
 
-    // TODO: Implement actual file I/O
-    Print(L"ConfigLoadFromFile: Loading configuration from %s\n", FilePath);
+    // Get file system access
+    Status = gBS->HandleProtocol(
+        ImageHandle,
+        &gEfiLoadedImageProtocolGuid,
+        (VOID**)&LoadedImage
+    );
+    if (EFI_ERROR(Status)) {
+        Print(L"Failed to get loaded image protocol: %r\n", Status);
+        return Status;
+    }
 
+    Status = gBS->HandleProtocol(
+        LoadedImage->DeviceHandle,
+        &gEfiSimpleFileSystemProtocolGuid,
+        (VOID**)&FileSystem
+    );
+    if (EFI_ERROR(Status)) {
+        Print(L"Failed to get file system protocol: %r\n", Status);
+        return Status;
+    }
+
+    Status = FileSystem->OpenVolume(FileSystem, &Root);
+    if (EFI_ERROR(Status)) {
+        Print(L"Failed to open volume: %r\n", Status);
+        return Status;
+    }
+
+    // Open file for reading
+    Status = Root->Open(
+        Root,
+        &ConfigFile,
+        FilePath,
+        EFI_FILE_MODE_READ,
+        0
+    );
+    if (EFI_ERROR(Status)) {
+        Print(L"Failed to open config file: %r\n", Status);
+        Root->Close(Root);
+        return Status;
+    }
+
+    // Get file size
+    FileInfoSize = SIZE_OF_EFI_FILE_INFO + 512;
+    FileInfo = AllocateZeroPool(FileInfoSize);
+    if (FileInfo == NULL) {
+        ConfigFile->Close(ConfigFile);
+        Root->Close(Root);
+        return EFI_OUT_OF_RESOURCES;
+    }
+
+    Status = ConfigFile->GetInfo(ConfigFile, &gEfiFileInfoGuid, &FileInfoSize, FileInfo);
+    if (EFI_ERROR(Status)) {
+        Print(L"Failed to get file info: %r\n", Status);
+        FreePool(FileInfo);
+        ConfigFile->Close(ConfigFile);
+        Root->Close(Root);
+        return Status;
+    }
+
+    FileSize = (UINTN)FileInfo->FileSize;
+    FreePool(FileInfo);
+
+    // Read file content
+    FileBuffer = AllocateZeroPool(FileSize + 1);
+    if (FileBuffer == NULL) {
+        ConfigFile->Close(ConfigFile);
+        Root->Close(Root);
+        return EFI_OUT_OF_RESOURCES;
+    }
+
+    Status = ConfigFile->Read(ConfigFile, &FileSize, FileBuffer);
+    if (EFI_ERROR(Status)) {
+        Print(L"Failed to read file: %r\n", Status);
+        FreePool(FileBuffer);
+        ConfigFile->Close(ConfigFile);
+        Root->Close(Root);
+        return Status;
+    }
+
+    ConfigFile->Close(ConfigFile);
+    Root->Close(Root);
+
+    // Parse the file (simplified - just print for now)
+    // A full implementation would parse the INI-like format and reconstruct entries
+    Print(L"Configuration file loaded (%u bytes)\n", FileSize);
+    Print(L"Note: Full parsing implementation is a work in progress\n");
+    Print(L"File contents:\n%a\n", FileBuffer);
+
+    FreePool(FileBuffer);
+    
     return EFI_SUCCESS;
 }
 
@@ -481,6 +579,100 @@ ConfigGetEntry(CONFIG_MANAGER *Manager, UINTN Index)
         return NULL;
     }
     return &Manager->Entries[Index];
+}
+
+/**
+ * Create a backup of configuration before applying changes
+ */
+EFI_STATUS 
+ConfigCreateBackup(CONFIG_MANAGER *Manager, EFI_HANDLE ImageHandle, CHAR16 *BackupPath)
+{
+    EFI_STATUS Status;
+    CHAR16 TimestampedPath[256];
+    
+    if (Manager == NULL || ImageHandle == NULL || BackupPath == NULL) {
+        return EFI_INVALID_PARAMETER;
+    }
+
+    // Create a timestamped backup filename
+    // For simplicity, just use the provided path
+    // In production, might want to add timestamp
+    UnicodeSPrint(TimestampedPath, sizeof(TimestampedPath), L"%s.backup", BackupPath);
+    
+    Print(L"Creating configuration backup at %s\n", TimestampedPath);
+    
+    // Save current configuration to backup file
+    Status = ConfigSaveToFile(Manager, ImageHandle, TimestampedPath);
+    if (EFI_ERROR(Status)) {
+        Print(L"Failed to create backup: %r\n", Status);
+        return Status;
+    }
+    
+    Print(L"Backup created successfully\n");
+    return EFI_SUCCESS;
+}
+
+/**
+ * Validate configuration entries before applying
+ */
+EFI_STATUS 
+ConfigValidate(CONFIG_MANAGER *Manager)
+{
+    UINTN i;
+    CONFIG_ENTRY *Entry;
+    BOOLEAN IsValid = TRUE;
+    
+    if (Manager == NULL) {
+        return EFI_INVALID_PARAMETER;
+    }
+
+    Print(L"\nValidating configuration (%u entries)...\n", Manager->EntryCount);
+    
+    for (i = 0; i < Manager->EntryCount; i++) {
+        Entry = &Manager->Entries[i];
+        
+        // Check for null pointers
+        if (Entry->VariableName == NULL) {
+            Print(L"  Entry %u: INVALID - Variable name is NULL\n", i);
+            IsValid = FALSE;
+            continue;
+        }
+        
+        if (Entry->Value == NULL) {
+            Print(L"  Entry %u: INVALID - Value is NULL\n", i);
+            IsValid = FALSE;
+            continue;
+        }
+        
+        // Check for reasonable size
+        if (Entry->Size == 0) {
+            Print(L"  Entry %u: WARNING - Size is 0\n", i);
+        }
+        
+        if (Entry->Size > 65536) {
+            Print(L"  Entry %u: WARNING - Size is very large (%u bytes)\n", i, Entry->Size);
+        }
+        
+        // Check variable name length
+        UINTN NameLen = StrLen(Entry->VariableName);
+        if (NameLen == 0) {
+            Print(L"  Entry %u: INVALID - Variable name is empty\n", i);
+            IsValid = FALSE;
+            continue;
+        }
+        
+        if (NameLen > 255) {
+            Print(L"  Entry %u: WARNING - Variable name is very long (%u chars)\n", i, NameLen);
+        }
+    }
+    
+    if (IsValid) {
+        Print(L"Validation passed!\n");
+        return EFI_SUCCESS;
+    } else {
+        Print(L"Validation FAILED - invalid entries detected\n");
+        return EFI_INVALID_PARAMETER;
+    }
 }
 
 /**
