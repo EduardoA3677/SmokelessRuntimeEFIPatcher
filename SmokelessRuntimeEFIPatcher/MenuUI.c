@@ -10,6 +10,8 @@
 #define COLOR_HIDDEN        (EFI_LIGHTGREEN | EFI_BACKGROUND_BLACK)
 #define COLOR_DESCRIPTION   (EFI_CYAN | EFI_BACKGROUND_BLACK)
 #define COLOR_BACKGROUND    (EFI_BLACK | EFI_BACKGROUND_BLACK)
+#define COLOR_TAB_ACTIVE    (EFI_WHITE | EFI_BACKGROUND_BLUE)
+#define COLOR_TAB_INACTIVE  (EFI_LIGHTGRAY | EFI_BACKGROUND_BLACK)
 
 /**
  * Initialize menu system
@@ -37,6 +39,14 @@ EFI_STATUS MenuInitialize(MENU_CONTEXT *Context)
     Context->Colors.HiddenColor = COLOR_HIDDEN;
     Context->Colors.DescriptionColor = COLOR_DESCRIPTION;
     Context->Colors.BackgroundColor = COLOR_BACKGROUND;
+    Context->Colors.TabActiveColor = COLOR_TAB_ACTIVE;
+    Context->Colors.TabInactiveColor = COLOR_TAB_INACTIVE;
+    
+    // Initialize tab support (disabled by default)
+    Context->Tabs = NULL;
+    Context->TabCount = 0;
+    Context->CurrentTabIndex = 0;
+    Context->UseTabMode = FALSE;
     
     return EFI_SUCCESS;
 }
@@ -171,6 +181,141 @@ EFI_STATUS MenuAddInfoItem(MENU_PAGE *Page, UINTN Index, CHAR16 *Title)
 }
 
 /**
+ * Initialize tab mode
+ */
+EFI_STATUS MenuInitializeTabs(MENU_CONTEXT *Context, UINTN TabCount)
+{
+    if (Context == NULL || TabCount == 0)
+        return EFI_INVALID_PARAMETER;
+    
+    // Allocate tab array
+    Context->Tabs = AllocateZeroPool(sizeof(MENU_TAB) * TabCount);
+    if (Context->Tabs == NULL)
+        return EFI_OUT_OF_RESOURCES;
+    
+    Context->TabCount = TabCount;
+    Context->CurrentTabIndex = 0;
+    Context->UseTabMode = TRUE;
+    
+    return EFI_SUCCESS;
+}
+
+/**
+ * Add a tab to the menu
+ */
+EFI_STATUS MenuAddTab(
+    MENU_CONTEXT *Context,
+    UINTN Index,
+    CHAR16 *Name,
+    MENU_PAGE *Page
+)
+{
+    if (Context == NULL || Index >= Context->TabCount || Name == NULL || Page == NULL)
+        return EFI_INVALID_PARAMETER;
+    
+    if (!Context->UseTabMode || Context->Tabs == NULL)
+        return EFI_NOT_READY;
+    
+    MENU_TAB *Tab = &Context->Tabs[Index];
+    Tab->Name = AllocateCopyPool(StrSize(Name), Name);
+    if (Tab->Name == NULL)
+        return EFI_OUT_OF_RESOURCES;
+    
+    Tab->Page = Page;
+    Tab->Enabled = TRUE;
+    Tab->Tag = Index;
+    
+    return EFI_SUCCESS;
+}
+
+/**
+ * Switch to a different tab
+ */
+EFI_STATUS MenuSwitchTab(MENU_CONTEXT *Context, UINTN TabIndex)
+{
+    if (Context == NULL || !Context->UseTabMode || Context->Tabs == NULL)
+        return EFI_INVALID_PARAMETER;
+    
+    if (TabIndex >= Context->TabCount)
+        return EFI_INVALID_PARAMETER;
+    
+    if (!Context->Tabs[TabIndex].Enabled)
+        return EFI_ACCESS_DENIED;
+    
+    Context->CurrentTabIndex = TabIndex;
+    Context->CurrentPage = Context->Tabs[TabIndex].Page;
+    
+    // Reset selection to first enabled item
+    if (Context->CurrentPage != NULL && Context->CurrentPage->ItemCount > 0)
+    {
+        Context->CurrentPage->SelectedIndex = 0;
+        // Find first enabled item
+        for (UINTN i = 0; i < Context->CurrentPage->ItemCount; i++)
+        {
+            if (Context->CurrentPage->Items[i].Enabled)
+            {
+                Context->CurrentPage->SelectedIndex = i;
+                break;
+            }
+        }
+    }
+    
+    return EFI_SUCCESS;
+}
+
+/**
+ * Draw tab bar at the top
+ */
+STATIC VOID MenuDrawTabs(MENU_CONTEXT *Context)
+{
+    if (Context == NULL || !Context->UseTabMode || Context->Tabs == NULL)
+        return;
+    
+    EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *ConOut = Context->TextOut;
+    
+    // Draw tab bar on line 1 (below title)
+    ConOut->SetCursorPosition(ConOut, 0, 1);
+    
+    UINTN Col = 2;
+    for (UINTN i = 0; i < Context->TabCount; i++)
+    {
+        MENU_TAB *Tab = &Context->Tabs[i];
+        
+        // Set color based on active/inactive state
+        if (i == Context->CurrentTabIndex)
+            ConOut->SetAttribute(ConOut, Context->Colors.TabActiveColor);
+        else
+            ConOut->SetAttribute(ConOut, Context->Colors.TabInactiveColor);
+        
+        // Draw tab
+        ConOut->SetCursorPosition(ConOut, Col, 1);
+        
+        if (i == Context->CurrentTabIndex)
+            ConOut->OutputString(ConOut, L"[");
+        else
+            ConOut->OutputString(ConOut, L" ");
+        
+        ConOut->OutputString(ConOut, Tab->Name);
+        
+        if (i == Context->CurrentTabIndex)
+            ConOut->OutputString(ConOut, L"]");
+        else
+            ConOut->OutputString(ConOut, L" ");
+        
+        // Move to next tab position
+        Col += StrLen(Tab->Name) + 3;
+    }
+    
+    // Fill rest of line with normal color
+    ConOut->SetAttribute(ConOut, Context->Colors.BackgroundColor);
+    for (; Col < Context->ScreenWidth; Col++)
+    {
+        ConOut->SetCursorPosition(ConOut, Col, 1);
+        ConOut->OutputString(ConOut, L" ");
+    }
+}
+
+/**
  * Draw the current menu page
  */
 VOID MenuDraw(MENU_CONTEXT *Context)
@@ -199,8 +344,14 @@ VOID MenuDraw(MENU_CONTEXT *Context)
     ConOut->SetCursorPosition(ConOut, Padding, 0);
     ConOut->OutputString(ConOut, Page->Title);
     
-    // Draw menu items
-    UINTN Row = 2;
+    // Draw tab bar if enabled
+    if (Context->UseTabMode)
+    {
+        MenuDrawTabs(Context);
+    }
+    
+    // Draw menu items (start at row 3 if tabs enabled, row 2 otherwise)
+    UINTN Row = Context->UseTabMode ? 3 : 2;
     for (UINTN i = 0; i < Page->ItemCount; i++)
     {
         MENU_ITEM *Item = &Page->Items[i];
@@ -259,7 +410,15 @@ VOID MenuDraw(MENU_CONTEXT *Context)
     // Draw help bar at bottom
     ConOut->SetAttribute(ConOut, Context->Colors.DescriptionColor);
     ConOut->SetCursorPosition(ConOut, 0, Context->ScreenHeight - 2);
-    ConOut->OutputString(ConOut, L"Use Arrow Keys to navigate | Enter to select | ESC to go back");
+    
+    if (Context->UseTabMode)
+    {
+        ConOut->OutputString(ConOut, L"Up/Down: Navigate | Left/Right: Switch Tabs | Enter: Select | ESC: Back");
+    }
+    else
+    {
+        ConOut->OutputString(ConOut, L"Use Arrow Keys to navigate | Enter to select | ESC to go back");
+    }
     
     // Draw description of selected item
     if (Page->SelectedIndex < Page->ItemCount)
@@ -314,6 +473,7 @@ EFI_STATUS MenuHandleInput(MENU_CONTEXT *Context, EFI_INPUT_KEY *Key)
         return EFI_INVALID_PARAMETER;
     
     MENU_PAGE *Page = Context->CurrentPage;
+    EFI_STATUS Status;
     
     // Handle arrow keys
     if (Key->ScanCode == SCAN_UP)
@@ -326,6 +486,30 @@ EFI_STATUS MenuHandleInput(MENU_CONTEXT *Context, EFI_INPUT_KEY *Key)
     {
         Page->SelectedIndex = FindNextSelectableItem(Page, Page->SelectedIndex, TRUE);
         MenuDraw(Context);
+        return EFI_SUCCESS;
+    }
+    else if (Key->ScanCode == SCAN_LEFT && Context->UseTabMode)
+    {
+        // Switch to previous tab
+        UINTN NewTabIndex = (Context->CurrentTabIndex == 0) ? 
+                            (Context->TabCount - 1) : 
+                            (Context->CurrentTabIndex - 1);
+        Status = MenuSwitchTab(Context, NewTabIndex);
+        if (!EFI_ERROR(Status))
+        {
+            MenuDraw(Context);
+        }
+        return EFI_SUCCESS;
+    }
+    else if (Key->ScanCode == SCAN_RIGHT && Context->UseTabMode)
+    {
+        // Switch to next tab
+        UINTN NewTabIndex = (Context->CurrentTabIndex + 1) % Context->TabCount;
+        Status = MenuSwitchTab(Context, NewTabIndex);
+        if (!EFI_ERROR(Status))
+        {
+            MenuDraw(Context);
+        }
         return EFI_SUCCESS;
     }
     else if (Key->ScanCode == SCAN_ESC)
@@ -363,11 +547,20 @@ EFI_STATUS MenuHandleInput(MENU_CONTEXT *Context, EFI_INPUT_KEY *Key)
  */
 EFI_STATUS MenuRun(MENU_CONTEXT *Context, MENU_PAGE *StartPage)
 {
-    if (Context == NULL || StartPage == NULL)
+    if (Context == NULL)
         return EFI_INVALID_PARAMETER;
     
-    Context->CurrentPage = StartPage;
-    Context->RootPage = StartPage;
+    // For tab mode, CurrentPage is already set by MenuSwitchTab
+    // For regular mode, we need StartPage
+    if (!Context->UseTabMode)
+    {
+        if (StartPage == NULL)
+            return EFI_INVALID_PARAMETER;
+        
+        Context->CurrentPage = StartPage;
+        Context->RootPage = StartPage;
+    }
+    
     Context->Running = TRUE;
     
     // Initial draw

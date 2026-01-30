@@ -20,6 +20,7 @@ typedef enum {
 // Forward declaration
 typedef struct _MENU_ITEM MENU_ITEM;
 typedef struct _MENU_PAGE MENU_PAGE;
+typedef struct _MENU_TAB MENU_TAB;
 
 // Menu item callback function
 typedef EFI_STATUS (*MENU_ITEM_CALLBACK)(MENU_ITEM *Item, VOID *Context);
@@ -46,6 +47,14 @@ struct _MENU_PAGE {
     MENU_PAGE *Parent;          // Parent page (for back navigation)
 };
 
+// Menu tab structure for BIOS-like interface
+struct _MENU_TAB {
+    CHAR16 *Name;               // Tab name (Main, Advanced, etc.)
+    MENU_PAGE *Page;            // Page shown when tab is active
+    BOOLEAN Enabled;            // Can be selected
+    UINTN Tag;                  // Custom identifier
+};
+
 // Color scheme
 typedef struct {
     UINTN TitleColor;
@@ -55,6 +64,8 @@ typedef struct {
     UINTN HiddenColor;
     UINTN DescriptionColor;
     UINTN BackgroundColor;
+    UINTN TabActiveColor;       // Active tab color
+    UINTN TabInactiveColor;     // Inactive tab color
 } MENU_COLOR_SCHEME;
 
 // Menu context
@@ -67,6 +78,12 @@ typedef struct {
     EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *TextOut;
     UINTN ScreenWidth;
     UINTN ScreenHeight;
+    
+    // Tab support
+    MENU_TAB *Tabs;            // Array of tabs
+    UINTN TabCount;            // Number of tabs
+    UINTN CurrentTabIndex;     // Currently active tab
+    BOOLEAN UseTabMode;        // Enable/disable tab interface
 } MENU_CONTEXT;
 
 /**
@@ -111,6 +128,26 @@ EFI_STATUS MenuAddSeparator(MENU_PAGE *Page, UINTN Index, CHAR16 *Title);
  * Add an info item
  */
 EFI_STATUS MenuAddInfoItem(MENU_PAGE *Page, UINTN Index, CHAR16 *Title);
+
+/**
+ * Initialize tab mode
+ */
+EFI_STATUS MenuInitializeTabs(MENU_CONTEXT *Context, UINTN TabCount);
+
+/**
+ * Add a tab to the menu
+ */
+EFI_STATUS MenuAddTab(
+    MENU_CONTEXT *Context,
+    UINTN Index,
+    CHAR16 *Name,
+    MENU_PAGE *Page
+);
+
+/**
+ * Switch to a different tab
+ */
+EFI_STATUS MenuSwitchTab(MENU_CONTEXT *Context, UINTN TabIndex);
 
 /**
  * Run the menu system (main loop)
