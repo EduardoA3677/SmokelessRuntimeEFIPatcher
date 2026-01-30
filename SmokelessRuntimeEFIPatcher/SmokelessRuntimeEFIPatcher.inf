@@ -15,6 +15,8 @@
   BiosDetector.c
   IfrParser.c
   AutoPatcher.c
+  MenuUI.c
+  HiiBrowser.c
 [Packages]
 	MdePkg/MdePkg.dec
   MdeModulePkg/MdeModulePkg.dec
@@ -45,6 +47,11 @@
   gEfiHiiPopupProtocolGuid
   gEdkiiFormDisplayEngineProtocolGuid
   gEfiSmbiosProtocolGuid                        ## CONSUMES
+  gEfiHiiDatabaseProtocolGuid                   ## CONSUMES
+  gEfiHiiConfigRoutingProtocolGuid              ## CONSUMES
+  gEfiFormBrowser2ProtocolGuid                  ## CONSUMES
+  gEfiSimpleTextInputProtocolGuid               ## CONSUMES
+  gEfiSimpleTextOutputProtocolGuid              ## CONSUMES
 [Guids]
   gEfiAcpiTableGuid
   gEfiAcpi20TableGuid

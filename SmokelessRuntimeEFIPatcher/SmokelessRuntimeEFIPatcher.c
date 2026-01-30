@@ -22,7 +22,9 @@
 #include "Opcode.h"
 #include "BiosDetector.h"
 #include "AutoPatcher.h"
-#define SREP_VERSION L"0.2.0"
+#include "MenuUI.h"
+#include "HiiBrowser.h"
+#define SREP_VERSION L"0.3.0"
 
 EFI_BOOT_SERVICES *_gBS = NULL;
 EFI_RUNTIME_SERVICES *_gRS = NULL;
@@ -149,6 +151,211 @@ VOID PrintDump(UINT16 Size, UINT8 *DUMP)
 }
 
 
+// ========== MENU CALLBACK FUNCTIONS ==========
+
+// Global context for menu callbacks
+typedef struct {
+    EFI_HANDLE ImageHandle;
+    BIOS_INFO BiosInfo;
+} SREP_CONTEXT;
+
+/**
+ * Callback: Auto-detect and patch BIOS
+ */
+EFI_STATUS MenuCallback_AutoPatch(MENU_ITEM *Item, VOID *Context)
+{
+    MENU_CONTEXT *MenuCtx = (MENU_CONTEXT *)Context;
+    SREP_CONTEXT *SrepCtx = (SREP_CONTEXT *)Item->Data;
+    EFI_STATUS Status;
+    
+    MenuShowMessage(MenuCtx, L"Auto-Patch", L"Detecting BIOS and applying patches...");
+    
+    // Detect BIOS type
+    Status = DetectBiosType(&SrepCtx->BiosInfo);
+    if (EFI_ERROR(Status))
+    {
+        MenuShowMessage(MenuCtx, L"Error", L"BIOS detection failed!");
+        return Status;
+    }
+    
+    // Auto-patch
+    Status = AutoPatchBios(SrepCtx->ImageHandle, &SrepCtx->BiosInfo);
+    if (EFI_ERROR(Status))
+    {
+        MenuShowMessage(MenuCtx, L"Error", L"Auto-patching failed!");
+        return Status;
+    }
+    
+    MenuShowMessage(MenuCtx, L"Success", L"Patching complete! Setup browser will launch.");
+    
+    // This will not return (enters infinite loop after Setup)
+    return EFI_SUCCESS;
+}
+
+/**
+ * Callback: Browse BIOS settings (read-only)
+ */
+EFI_STATUS MenuCallback_BrowseSettings(MENU_ITEM *Item, VOID *Context)
+{
+    MENU_CONTEXT *MenuCtx = (MENU_CONTEXT *)Context;
+    HII_BROWSER_CONTEXT HiiCtx;
+    EFI_STATUS Status;
+    
+    // Initialize HII browser
+    Status = HiiBrowserInitialize(&HiiCtx);
+    if (EFI_ERROR(Status))
+    {
+        MenuShowMessage(MenuCtx, L"Error", L"Failed to initialize HII browser!");
+        return Status;
+    }
+    
+    // Enumerate forms
+    Status = HiiBrowserEnumerateForms(&HiiCtx);
+    if (EFI_ERROR(Status))
+    {
+        MenuShowMessage(MenuCtx, L"Error", L"Failed to enumerate BIOS forms!");
+        HiiBrowserCleanup(&HiiCtx);
+        return Status;
+    }
+    
+    // Create and show forms menu
+    MENU_PAGE *FormsMenu = HiiBrowserCreateFormsMenu(&HiiCtx);
+    if (FormsMenu == NULL)
+    {
+        MenuShowMessage(MenuCtx, L"Error", L"Failed to create forms menu!");
+        HiiBrowserCleanup(&HiiCtx);
+        return EFI_OUT_OF_RESOURCES;
+    }
+    
+    MenuNavigateTo(MenuCtx, FormsMenu);
+    
+    // Cleanup
+    MenuFreePage(FormsMenu);
+    HiiBrowserCleanup(&HiiCtx);
+    
+    return EFI_SUCCESS;
+}
+
+/**
+ * Callback: Launch Setup Browser directly
+ */
+EFI_STATUS MenuCallback_LaunchSetup(MENU_ITEM *Item, VOID *Context)
+{
+    MENU_CONTEXT *MenuCtx = (MENU_CONTEXT *)Context;
+    EFI_FORM_BROWSER2_PROTOCOL *FormBrowser2;
+    EFI_STATUS Status;
+    
+    // Try to locate FormBrowser2 protocol
+    Status = gBS->LocateProtocol(&gEfiFormBrowser2ProtocolGuid, NULL, (VOID **)&FormBrowser2);
+    if (EFI_ERROR(Status))
+    {
+        MenuShowMessage(MenuCtx, L"Error", L"FormBrowser2 Protocol not available!");
+        return Status;
+    }
+    
+    MenuShowMessage(MenuCtx, L"Launching", L"Starting BIOS Setup Browser...");
+    
+    // Clear screen and launch Setup
+    gST->ConOut->ClearScreen(gST->ConOut);
+    
+    Status = FormBrowser2->SendForm(FormBrowser2, NULL, 0, NULL, 0, NULL, NULL);
+    
+    // Redraw menu after Setup returns
+    MenuDraw(MenuCtx);
+    
+    return EFI_SUCCESS;
+}
+
+/**
+ * Callback: About dialog
+ */
+EFI_STATUS MenuCallback_About(MENU_ITEM *Item, VOID *Context)
+{
+    MENU_CONTEXT *MenuCtx = (MENU_CONTEXT *)Context;
+    
+    MenuShowMessage(MenuCtx, 
+        L"About SREP",
+        L"SmokelessRuntimeEFIPatcher v0.3.0\nInteractive BIOS Patcher"
+    );
+    
+    return EFI_SUCCESS;
+}
+
+/**
+ * Callback: Exit application
+ */
+EFI_STATUS MenuCallback_Exit(MENU_ITEM *Item, VOID *Context)
+{
+    MENU_CONTEXT *MenuCtx = (MENU_CONTEXT *)Context;
+    BOOLEAN Confirm = FALSE;
+    
+    MenuShowConfirm(MenuCtx, L"Exit", L"Are you sure you want to exit?", &Confirm);
+    
+    if (Confirm)
+    {
+        MenuCtx->Running = FALSE;
+    }
+    
+    return EFI_SUCCESS;
+}
+
+/**
+ * Create the main menu
+ */
+MENU_PAGE *CreateMainMenu(SREP_CONTEXT *SrepCtx)
+{
+    MENU_PAGE *MainMenu = MenuCreatePage(L"SmokelessRuntimeEFIPatcher - Main Menu", 8);
+    if (MainMenu == NULL)
+        return NULL;
+    
+    MenuAddInfoItem(MainMenu, 0, L"SREP v0.3.0 - Interactive BIOS Patcher");
+    MenuAddSeparator(MainMenu, 1, NULL);
+    
+    MenuAddActionItem(
+        MainMenu, 2,
+        L"Auto-Detect and Patch BIOS",
+        L"Automatically detect BIOS type and apply patches",
+        MenuCallback_AutoPatch,
+        SrepCtx
+    );
+    
+    MenuAddActionItem(
+        MainMenu, 3,
+        L"Browse BIOS Settings",
+        L"View BIOS settings (read-only)",
+        MenuCallback_BrowseSettings,
+        NULL
+    );
+    
+    MenuAddActionItem(
+        MainMenu, 4,
+        L"Launch Setup Browser",
+        L"Launch BIOS Setup Browser directly",
+        MenuCallback_LaunchSetup,
+        NULL
+    );
+    
+    MenuAddSeparator(MainMenu, 5, NULL);
+    
+    MenuAddActionItem(
+        MainMenu, 6,
+        L"About",
+        L"Information about this tool",
+        MenuCallback_About,
+        NULL
+    );
+    
+    MenuAddActionItem(
+        MainMenu, 7,
+        L"Exit",
+        L"Exit to UEFI Shell or Boot Menu",
+        MenuCallback_Exit,
+        NULL
+    );
+    
+    return MainMenu;
+}
+
 
 EFI_STATUS EFIAPI SREPEntry(IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *SystemTable)
 {
@@ -180,6 +387,76 @@ EFI_STATUS EFIAPI SREPEntry(IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *Syst
     LogToFile(LogFile,Log);
     AsciiSPrint(Log,512,"Enhanced with Auto-Detection and Intelligent Patching\n\r");
     LogToFile(LogFile,Log);
+    
+    // Check for interactive mode flag file
+    BOOLEAN UseInteractiveMode = FALSE;
+    EFI_FILE *InteractiveFlag;
+    Status = Root->Open(Root, &InteractiveFlag, L"SREP_Interactive.flag", EFI_FILE_MODE_READ, 0);
+    if (!EFI_ERROR(Status))
+    {
+        InteractiveFlag->Close(InteractiveFlag);
+        UseInteractiveMode = TRUE;
+        AsciiSPrint(Log,512,"Interactive mode flag found\n\r");
+        LogToFile(LogFile,Log);
+    }
+    
+    // If no flag file, default to interactive mode (new behavior in v0.3.0)
+    // Users can create SREP_Auto.flag to skip interactive mode
+    EFI_FILE *AutoFlag;
+    Status = Root->Open(Root, &AutoFlag, L"SREP_Auto.flag", EFI_FILE_MODE_READ, 0);
+    if (!EFI_ERROR(Status))
+    {
+        AutoFlag->Close(AutoFlag);
+        UseInteractiveMode = FALSE;
+        AsciiSPrint(Log,512,"Auto mode flag found, skipping interactive menu\n\r");
+        LogToFile(LogFile,Log);
+    }
+    else
+    {
+        // Default to interactive mode
+        UseInteractiveMode = TRUE;
+    }
+    
+    // INTERACTIVE MODE: Show menu interface
+    if (UseInteractiveMode)
+    {
+        AsciiSPrint(Log,512,"\n=== INTERACTIVE MODE: Starting Menu ===\n\r");
+        LogToFile(LogFile,Log);
+        
+        // Initialize menu system
+        MENU_CONTEXT MenuCtx;
+        Status = MenuInitialize(&MenuCtx);
+        if (EFI_ERROR(Status))
+        {
+            Print(L"Failed to initialize menu system: %r\n\r", Status);
+            LogFile->Close(LogFile);
+            return Status;
+        }
+        
+        // Create SREP context for callbacks
+        SREP_CONTEXT SrepCtx;
+        SrepCtx.ImageHandle = ImageHandle;
+        ZeroMem(&SrepCtx.BiosInfo, sizeof(BIOS_INFO));
+        
+        // Create main menu
+        MENU_PAGE *MainMenu = CreateMainMenu(&SrepCtx);
+        if (MainMenu == NULL)
+        {
+            Print(L"Failed to create main menu\n\r");
+            LogFile->Close(LogFile);
+            return EFI_OUT_OF_RESOURCES;
+        }
+        
+        // Run menu loop
+        Status = MenuRun(&MenuCtx, MainMenu);
+        
+        // Cleanup
+        MenuFreePage(MainMenu);
+        MenuCleanup(&MenuCtx);
+        
+        LogFile->Close(LogFile);
+        return Status;
+    }
     
     // Check if config file exists (for backward compatibility)
     UnicodeSPrint(FileName, sizeof(FileName), L"%a", "SREP_Config.cfg");
