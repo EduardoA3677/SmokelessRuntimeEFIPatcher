@@ -425,21 +425,9 @@ EFI_STATUS CreateMainMenu(SREP_CONTEXT *SrepCtx, MENU_PAGE **OutMenu)
 {
     MENU_PAGE *MainMenu;
     
-    // Create main menu page
-    MainMenu = AllocateZeroPool(sizeof(MENU_PAGE));
+    // Create main menu page with 11 items
+    MainMenu = MenuCreatePage(L"SREP - SmokelessRuntimeEFIPatcher v0.3.1", 11);
     if (MainMenu == NULL) {
-        return EFI_OUT_OF_RESOURCES;
-    }
-    
-    MainMenu->Title = L"SREP - SmokelessRuntimeEFIPatcher v0.3.1";
-    MainMenu->Description = L"Enhanced BIOS Configuration Tool with NVRAM Support";
-    MainMenu->MaxItems = 20;
-    MainMenu->ItemCount = 11;  // Set to actual number of items
-    MainMenu->SelectedIndex = 0;
-    MainMenu->Items = AllocateZeroPool(sizeof(MENU_ITEM) * MainMenu->MaxItems);
-    
-    if (MainMenu->Items == NULL) {
-        FreePool(MainMenu);
         return EFI_OUT_OF_RESOURCES;
     }
     
