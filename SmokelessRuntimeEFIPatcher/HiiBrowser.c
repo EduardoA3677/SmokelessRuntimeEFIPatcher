@@ -1,4 +1,5 @@
 #include "HiiBrowser.h"
+#include "Constants.h"
 #include <Library/DebugLib.h>
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/UefiRuntimeServicesTableLib.h>
@@ -1249,7 +1250,7 @@ EFI_STATUS HiiBrowserCreateDynamicTabs(
                 ItemIndex++;
             }
             
-            if (Count < Capacity)
+            if (ItemIndex < ItemCount - 1)
             {
                 CHAR16 InfoText[MAX_DESCRIPTION_LENGTH];
                 UnicodeSPrint(InfoText, sizeof(InfoText), 
