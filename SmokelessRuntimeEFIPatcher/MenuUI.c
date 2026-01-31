@@ -576,6 +576,25 @@ static UINTN FindFirstEnabledItem(MENU_PAGE *Page)
 }
 
 /**
+ * Find last enabled item in a page
+ */
+static UINTN FindLastEnabledItem(MENU_PAGE *Page)
+{
+    if (Page == NULL || Page->ItemCount == 0)
+        return 0;
+    
+    // Search backwards from the end
+    for (INTN i = (INTN)(Page->ItemCount - 1); i >= 0; i--)
+    {
+        if (Page->Items[i].Enabled)
+            return (UINTN)i;
+    }
+    
+    // No enabled items found, return 0 as fallback
+    return 0;
+}
+
+/**
  * Find next selectable item
  */
 static UINTN FindNextSelectableItem(MENU_PAGE *Page, UINTN StartIndex, BOOLEAN Forward)
@@ -631,27 +650,75 @@ EFI_STATUS MenuHandleInput(MENU_CONTEXT *Context, EFI_INPUT_KEY *Key)
         MenuDraw(Context);
         return EFI_SUCCESS;
     }
+    else if (Key->ScanCode == SCAN_HOME)
+    {
+        // Home: Jump to first enabled item
+        Page->SelectedIndex = FindFirstEnabledItem(Page);
+        MenuDraw(Context);
+        return EFI_SUCCESS;
+    }
+    else if (Key->ScanCode == SCAN_END)
+    {
+        // End: Jump to last enabled item
+        Page->SelectedIndex = FindLastEnabledItem(Page);
+        MenuDraw(Context);
+        return EFI_SUCCESS;
+    }
+    else if (Key->ScanCode == SCAN_PAGE_UP)
+    {
+        // Page Up: Jump up by 10 items or to first item
+        UINTN ItemsToSkip = 10;
+        UINTN CurrentIndex = Page->SelectedIndex;
+        for (UINTN i = 0; i < ItemsToSkip; i++)
+        {
+            CurrentIndex = FindNextSelectableItem(Page, CurrentIndex, FALSE);
+            if (CurrentIndex == FindFirstEnabledItem(Page) && i > 0)
+                break;  // Reached the top
+        }
+        Page->SelectedIndex = CurrentIndex;
+        MenuDraw(Context);
+        return EFI_SUCCESS;
+    }
+    else if (Key->ScanCode == SCAN_PAGE_DOWN)
+    {
+        // Page Down: Jump down by 10 items or to last item
+        UINTN ItemsToSkip = 10;
+        UINTN CurrentIndex = Page->SelectedIndex;
+        for (UINTN i = 0; i < ItemsToSkip; i++)
+        {
+            CurrentIndex = FindNextSelectableItem(Page, CurrentIndex, TRUE);
+            if (CurrentIndex == FindLastEnabledItem(Page) && i > 0)
+                break;  // Reached the bottom
+        }
+        Page->SelectedIndex = CurrentIndex;
+        MenuDraw(Context);
+        return EFI_SUCCESS;
+    }
     else if (Key->ScanCode == SCAN_LEFT && Context->UseTabMode)
     {
-        // Switch to previous tab
-        UINTN NewTabIndex = (Context->CurrentTabIndex == 0) ? 
-                            (Context->TabCount - 1) : 
-                            (Context->CurrentTabIndex - 1);
-        Status = MenuSwitchTab(Context, NewTabIndex);
-        if (!EFI_ERROR(Status))
+        // Switch to previous tab (stop at first tab, no wrapping)
+        if (Context->CurrentTabIndex > 0)
         {
-            MenuDraw(Context);
+            UINTN NewTabIndex = Context->CurrentTabIndex - 1;
+            Status = MenuSwitchTab(Context, NewTabIndex);
+            if (!EFI_ERROR(Status))
+            {
+                MenuDraw(Context);
+            }
         }
         return EFI_SUCCESS;
     }
     else if (Key->ScanCode == SCAN_RIGHT && Context->UseTabMode)
     {
-        // Switch to next tab
-        UINTN NewTabIndex = (Context->CurrentTabIndex + 1) % Context->TabCount;
-        Status = MenuSwitchTab(Context, NewTabIndex);
-        if (!EFI_ERROR(Status))
+        // Switch to next tab (stop at last tab, no wrapping)
+        if (Context->CurrentTabIndex + 1 < Context->TabCount)
         {
-            MenuDraw(Context);
+            UINTN NewTabIndex = Context->CurrentTabIndex + 1;
+            Status = MenuSwitchTab(Context, NewTabIndex);
+            if (!EFI_ERROR(Status))
+            {
+                MenuDraw(Context);
+            }
         }
         return EFI_SUCCESS;
     }
@@ -665,49 +732,54 @@ EFI_STATUS MenuHandleInput(MENU_CONTEXT *Context, EFI_INPUT_KEY *Key)
     if (Key->ScanCode == SCAN_F1)
     {
         // F1: Help (Context-sensitive help)
-        MenuShowMessage(Context, L"Help", L"F1=Help  F9=Defaults  F10=Save&Exit  ESC=Back");
+        CHAR16 HelpText[256];
+        UnicodeSPrint(HelpText, sizeof(HelpText), 
+            L"Navigation: ↑↓=Select  ←→=Tabs  Home/End  PgUp/PgDn\r\n"
+            L"Actions: Enter=Modify  F9=Defaults  F10=Save  ESC=Exit");
+        MenuShowMessage(Context, L"Help", HelpText);
         return EFI_SUCCESS;
     }
     else if (Key->ScanCode == SCAN_F9)
     {
         // F9: Load Setup Defaults / Optimized Defaults
-        MenuShowMessage(Context, L"Load Defaults", L"Load optimized default settings? (Not implemented)");
+        MenuShowMessage(Context, L"Load Defaults", 
+            L"This feature is not yet implemented.\r\n"
+            L"Future versions will restore all settings to defaults.");
         return EFI_SUCCESS;
     }
     else if (Key->ScanCode == SCAN_F10)
     {
         // F10: Save and Exit
-        // Check if we have HII context (for BIOS editor mode)
         if (Context->UserData != NULL)
         {
-            // UserData contains HII_BROWSER_CONTEXT
             HII_BROWSER_CONTEXT *HiiCtx = (HII_BROWSER_CONTEXT *)Context->UserData;
             HiiBrowserShowSaveDialog(HiiCtx);
         }
         else
         {
-            // No HII context, just show message
-            MenuShowMessage(Context, L"Save & Exit", L"Save changes and exit? Press ESC to confirm exit.");
+            MenuShowMessage(Context, L"Save & Exit", 
+                L"Configuration will be saved on exit.\r\n"
+                L"Press ESC again to exit the application.");
         }
         return EFI_SUCCESS;
     }
-    else if (Key->ScanCode == SCAN_F5)
+    else if (Key->ScanCode == SCAN_F5 || Key->ScanCode == SCAN_F6)
     {
-        // F5/F6: Change values (for current item if applicable)
-        // Could be used to decrement/increment numeric values
-        return EFI_SUCCESS;
-    }
-    else if (Key->ScanCode == SCAN_F6)
-    {
-        // F6: Increment value
+        // F5/F6: Change values (reserved for future item value modification)
         return EFI_SUCCESS;
     }
     
     // Handle Enter key
     if (Key->UnicodeChar == CHAR_CARRIAGE_RETURN)
     {
+        // Validate bounds before accessing
         if (Page->SelectedIndex >= Page->ItemCount)
+        {
+            // Invalid selection, reset to first enabled item
+            Page->SelectedIndex = FindFirstEnabledItem(Page);
+            MenuDraw(Context);
             return EFI_SUCCESS;
+        }
         
         MENU_ITEM *Item = &Page->Items[Page->SelectedIndex];
         
@@ -868,20 +940,89 @@ EFI_STATUS MenuShowMessage(MENU_CONTEXT *Context, CHAR16 *Title, CHAR16 *Message
         ConOut->SetCursorPosition(ConOut, 10, 11);
         ConOut->OutputString(ConOut, L"| ");
         ConOut->SetAttribute(ConOut, Context->Colors.TitleColor);
-        ConOut->OutputString(ConOut, Title);
+        // Truncate title if too long (max 46 chars to fit in box)
+        CHAR16 SafeTitle[48];
+        UINTN TitleLen = StrLen(Title);
+        if (TitleLen > 46)
+        {
+            StrnCpyS(SafeTitle, 48, Title, 46);
+        }
+        else
+        {
+            StrCpyS(SafeTitle, 48, Title);
+        }
+        ConOut->OutputString(ConOut, SafeTitle);
         ConOut->SetAttribute(ConOut, Context->Colors.NormalColor);
     }
     
-    ConOut->SetCursorPosition(ConOut, 10, 12);
-    ConOut->OutputString(ConOut, L"|                                                  |");
-    ConOut->SetCursorPosition(ConOut, 12, 12);
-    ConOut->OutputString(ConOut, Message);
+    // Handle multi-line messages (split by \r\n)
+    CHAR16 *MessageCopy = AllocateCopyPool(StrSize(Message), Message);
+    if (MessageCopy != NULL)
+    {
+        CHAR16 *Line = MessageCopy;
+        CHAR16 *NextLine;
+        UINTN Row = 12;
+        UINTN MaxRows = 5;  // Maximum message lines to display
+        
+        while (Line != NULL && Row < 12 + MaxRows)
+        {
+            // Find next line break
+            NextLine = StrStr(Line, L"\r\n");
+            if (NextLine != NULL)
+            {
+                *NextLine = L'\0';
+                NextLine += 2;  // Skip \r\n
+            }
+            
+            ConOut->SetCursorPosition(ConOut, 10, Row);
+            ConOut->OutputString(ConOut, L"|                                                  |");
+            ConOut->SetCursorPosition(ConOut, 12, Row);
+            
+            // Truncate line if too long (max 46 chars)
+            CHAR16 SafeLine[48];
+            UINTN LineLen = StrLen(Line);
+            if (LineLen > 46)
+            {
+                StrnCpyS(SafeLine, 48, Line, 46);
+            }
+            else
+            {
+                StrCpyS(SafeLine, 48, Line);
+            }
+            ConOut->OutputString(ConOut, SafeLine);
+            
+            Row++;
+            Line = NextLine;
+        }
+        
+        FreePool(MessageCopy);
+        
+        // Fill remaining rows
+        while (Row < 12 + MaxRows)
+        {
+            ConOut->SetCursorPosition(ConOut, 10, Row);
+            ConOut->OutputString(ConOut, L"|                                                  |");
+            Row++;
+        }
+    }
+    else
+    {
+        // Fallback: single line message if allocation fails
+        ConOut->SetCursorPosition(ConOut, 10, 12);
+        ConOut->OutputString(ConOut, L"|                                                  |");
+        ConOut->SetCursorPosition(ConOut, 12, 12);
+        ConOut->OutputString(ConOut, Message);
+        
+        for (UINTN Row = 13; Row < 17; Row++)
+        {
+            ConOut->SetCursorPosition(ConOut, 10, Row);
+            ConOut->OutputString(ConOut, L"|                                                  |");
+        }
+    }
     
-    ConOut->SetCursorPosition(ConOut, 10, 13);
-    ConOut->OutputString(ConOut, L"|                                                  |");
-    ConOut->SetCursorPosition(ConOut, 10, 14);
+    ConOut->SetCursorPosition(ConOut, 10, 17);
     ConOut->OutputString(ConOut, L"|              Press any key to continue           |");
-    ConOut->SetCursorPosition(ConOut, 10, 15);
+    ConOut->SetCursorPosition(ConOut, 10, 18);
     ConOut->OutputString(ConOut, L"+--------------------------------------------------+");
     
     // Wait for key

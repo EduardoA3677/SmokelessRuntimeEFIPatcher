@@ -1619,6 +1619,298 @@ EFI_STATUS HiiBrowserSaveChanges(HII_BROWSER_CONTEXT *Context)
 }
 
 /**
+ * Edit OneOf question (dropdown selection)
+ */
+EFI_STATUS HiiBrowserEditOneOfQuestion(
+    HII_BROWSER_CONTEXT *Context,
+    HII_QUESTION_INFO *Question,
+    MENU_ITEM *Item,
+    MENU_CONTEXT *MenuCtx
+)
+{
+    if (Context == NULL || Question == NULL || MenuCtx == NULL)
+        return EFI_INVALID_PARAMETER;
+    
+    if (Question->OptionCount == 0 || Question->Options == NULL)
+    {
+        MenuShowMessage(MenuCtx, L"No Options", L"This OneOf question has no available options");
+        return EFI_NOT_FOUND;
+    }
+    
+    EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *ConOut = gST->ConOut;
+    EFI_SIMPLE_TEXT_INPUT_PROTOCOL *ConIn = gST->ConIn;
+    
+    UINTN SelectedOption = 0;
+    
+    // Find current selection
+    for (UINTN i = 0; i < Question->OptionCount; i++)
+    {
+        if (Question->Options[i].Value == Question->CurrentOneOfValue)
+        {
+            SelectedOption = i;
+            break;
+        }
+    }
+    
+    BOOLEAN Done = FALSE;
+    
+    while (!Done)
+    {
+        // Draw selection dialog
+        ConOut->SetAttribute(ConOut, EFI_TEXT_ATTR(EFI_BLACK, EFI_LIGHTGRAY));
+        ConOut->ClearScreen(ConOut);
+        ConOut->SetCursorPosition(ConOut, 2, 2);
+        ConOut->SetAttribute(ConOut, EFI_TEXT_ATTR(EFI_WHITE, EFI_BLUE));
+        ConOut->OutputString(ConOut, L" Select Option ");
+        
+        ConOut->SetAttribute(ConOut, EFI_TEXT_ATTR(EFI_BLACK, EFI_LIGHTGRAY));
+        ConOut->SetCursorPosition(ConOut, 2, 3);
+        if (Question->Prompt)
+        {
+            ConOut->OutputString(ConOut, Question->Prompt);
+        }
+        
+        // Display options
+        UINTN StartRow = 5;
+        UINTN MaxVisible = 15;  // Maximum visible options
+        UINTN FirstVisible = 0;
+        
+        if (SelectedOption >= MaxVisible)
+        {
+            FirstVisible = SelectedOption - MaxVisible + 1;
+        }
+        
+        for (UINTN i = FirstVisible; i < Question->OptionCount && i < FirstVisible + MaxVisible; i++)
+        {
+            ConOut->SetCursorPosition(ConOut, 4, StartRow + (i - FirstVisible));
+            
+            if (i == SelectedOption)
+            {
+                ConOut->SetAttribute(ConOut, EFI_TEXT_ATTR(EFI_WHITE, EFI_BLUE));
+                ConOut->OutputString(ConOut, L"► ");
+            }
+            else
+            {
+                ConOut->SetAttribute(ConOut, EFI_TEXT_ATTR(EFI_BLACK, EFI_LIGHTGRAY));
+                ConOut->OutputString(ConOut, L"  ");
+            }
+            
+            if (Question->Options[i].Text != NULL)
+            {
+                ConOut->OutputString(ConOut, Question->Options[i].Text);
+            }
+        }
+        
+        // Show navigation help
+        ConOut->SetAttribute(ConOut, EFI_TEXT_ATTR(EFI_BLUE, EFI_LIGHTGRAY));
+        ConOut->SetCursorPosition(ConOut, 2, StartRow + MaxVisible + 1);
+        ConOut->OutputString(ConOut, L"↑↓: Navigate | Enter: Select | ESC: Cancel");
+        
+        // Wait for input
+        UINTN Index;
+        gBS->WaitForEvent(1, &ConIn->WaitForKey, &Index);
+        
+        EFI_INPUT_KEY Key;
+        ConIn->ReadKeyStroke(ConIn, &Key);
+        
+        if (Key.ScanCode == SCAN_UP && SelectedOption > 0)
+        {
+            SelectedOption--;
+        }
+        else if (Key.ScanCode == SCAN_DOWN && SelectedOption < Question->OptionCount - 1)
+        {
+            SelectedOption++;
+        }
+        else if (Key.UnicodeChar == CHAR_CARRIAGE_RETURN)
+        {
+            // Save the selected value
+            UINT64 NewValue = Question->Options[SelectedOption].Value;
+            HiiBrowserSetQuestionValue(Context, Question, &NewValue);
+            Question->CurrentOneOfValue = NewValue;
+            
+            // Update menu item title
+            if (Item->Title)
+                FreePool((VOID *)Item->Title);
+            
+            CHAR16 *NewTitle = AllocatePool(512 * sizeof(CHAR16));
+            if (NewTitle)
+            {
+                UnicodeSPrint(NewTitle, 512 * sizeof(CHAR16), 
+                             L"%s: %s%s", 
+                             Question->Prompt,
+                             Question->Options[SelectedOption].Text,
+                             Question->IsModified ? L" *" : L"");
+                Item->Title = NewTitle;
+            }
+            
+            Done = TRUE;
+        }
+        else if (Key.ScanCode == SCAN_ESC)
+        {
+            // Cancel
+            Done = TRUE;
+        }
+    }
+    
+    // Redraw menu
+    MenuDraw(MenuCtx);
+    
+    return EFI_SUCCESS;
+}
+
+/**
+ * Edit String question
+ */
+EFI_STATUS HiiBrowserEditStringQuestion(
+    HII_BROWSER_CONTEXT *Context,
+    HII_QUESTION_INFO *Question,
+    MENU_ITEM *Item,
+    MENU_CONTEXT *MenuCtx
+)
+{
+    if (Context == NULL || Question == NULL || MenuCtx == NULL)
+        return EFI_INVALID_PARAMETER;
+    
+    EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *ConOut = gST->ConOut;
+    EFI_SIMPLE_TEXT_INPUT_PROTOCOL *ConIn = gST->ConIn;
+    
+    // Allocate buffer for string input
+    // Buffer size: 256 characters (maximum BIOS string length)
+    // Display limit: 44 characters visible in dialog box
+    // Long strings are truncated for display but fully stored
+    CHAR16 InputBuffer[256];
+    ZeroMem(InputBuffer, sizeof(InputBuffer));
+    UINTN InputLength = 0;
+    
+    // Get current string value if available
+    if (Question->CurrentValue != NULL)
+    {
+        StrCpyS(InputBuffer, 256, (CHAR16 *)Question->CurrentValue);
+        InputLength = StrLen(InputBuffer);
+    }
+    
+    BOOLEAN Done = FALSE;
+    
+    while (!Done)
+    {
+        // Draw input dialog
+        ConOut->SetAttribute(ConOut, EFI_TEXT_ATTR(EFI_BLACK, EFI_LIGHTGRAY));
+        ConOut->SetCursorPosition(ConOut, 10, 8);
+        ConOut->OutputString(ConOut, L"+--------------------------------------------------+");
+        ConOut->SetCursorPosition(ConOut, 10, 9);
+        ConOut->OutputString(ConOut, L"|");
+        ConOut->SetAttribute(ConOut, EFI_TEXT_ATTR(EFI_WHITE, EFI_BLUE));
+        ConOut->OutputString(ConOut, L" Edit String ");
+        ConOut->SetAttribute(ConOut, EFI_TEXT_ATTR(EFI_BLACK, EFI_LIGHTGRAY));
+        ConOut->OutputString(ConOut, L"                                  |");
+        
+        ConOut->SetCursorPosition(ConOut, 10, 10);
+        ConOut->OutputString(ConOut, L"|                                                  |");
+        ConOut->SetCursorPosition(ConOut, 12, 10);
+        if (Question->Prompt)
+        {
+            // Truncate prompt if too long
+            CHAR16 TruncatedPrompt[45];
+            if (StrLen(Question->Prompt) > 44)
+            {
+                StrnCpyS(TruncatedPrompt, 45, Question->Prompt, 44);
+            }
+            else
+            {
+                StrCpyS(TruncatedPrompt, 45, Question->Prompt);
+            }
+            ConOut->OutputString(ConOut, TruncatedPrompt);
+        }
+        
+        ConOut->SetCursorPosition(ConOut, 10, 11);
+        ConOut->OutputString(ConOut, L"|                                                  |");
+        ConOut->SetCursorPosition(ConOut, 12, 11);
+        
+        // Display input buffer (max 44 chars visible)
+        CHAR16 DisplayBuffer[45];
+        if (InputLength > 44)
+        {
+            StrnCpyS(DisplayBuffer, 45, InputBuffer + (InputLength - 44), 44);
+        }
+        else
+        {
+            StrCpyS(DisplayBuffer, 45, InputBuffer);
+        }
+        ConOut->OutputString(ConOut, DisplayBuffer);
+        ConOut->OutputString(ConOut, L"_");  // Cursor
+        
+        ConOut->SetCursorPosition(ConOut, 10, 12);
+        ConOut->OutputString(ConOut, L"|                                                  |");
+        ConOut->SetCursorPosition(ConOut, 10, 13);
+        ConOut->OutputString(ConOut, L"| Enter: Save | Backspace: Delete | ESC: Cancel   |");
+        ConOut->SetCursorPosition(ConOut, 10, 14);
+        ConOut->OutputString(ConOut, L"+--------------------------------------------------+");
+        
+        // Wait for input
+        UINTN Index;
+        gBS->WaitForEvent(1, &ConIn->WaitForKey, &Index);
+        
+        EFI_INPUT_KEY Key;
+        ConIn->ReadKeyStroke(ConIn, &Key);
+        
+        if (Key.UnicodeChar == CHAR_CARRIAGE_RETURN)
+        {
+            // Save the string
+            CHAR16 *NewString = AllocateCopyPool(StrSize(InputBuffer), InputBuffer);
+            if (NewString != NULL)
+            {
+                if (Question->CurrentValue != NULL)
+                {
+                    FreePool(Question->CurrentValue);
+                }
+                Question->CurrentValue = NewString;
+                HiiBrowserSetQuestionValue(Context, Question, NewString);
+                
+                // Update menu item title
+                if (Item->Title)
+                    FreePool((VOID *)Item->Title);
+                
+                CHAR16 *NewTitle = AllocatePool(512 * sizeof(CHAR16));
+                if (NewTitle)
+                {
+                    UnicodeSPrint(NewTitle, 512 * sizeof(CHAR16), 
+                                 L"%s: \"%s\"%s", 
+                                 Question->Prompt,
+                                 InputBuffer,
+                                 Question->IsModified ? L" *" : L"");
+                    Item->Title = NewTitle;
+                }
+            }
+            
+            Done = TRUE;
+        }
+        else if (Key.UnicodeChar == CHAR_BACKSPACE && InputLength > 0)
+        {
+            // Delete last character
+            InputLength--;
+            InputBuffer[InputLength] = L'\0';
+        }
+        else if (Key.ScanCode == SCAN_ESC)
+        {
+            // Cancel
+            Done = TRUE;
+        }
+        else if (Key.UnicodeChar >= 0x20 && Key.UnicodeChar < 0x7F && InputLength < 255)
+        {
+            // Add printable character
+            InputBuffer[InputLength] = Key.UnicodeChar;
+            InputLength++;
+            InputBuffer[InputLength] = L'\0';
+        }
+    }
+    
+    // Redraw menu
+    MenuDraw(MenuCtx);
+    
+    return EFI_SUCCESS;
+}
+
+/**
  * Callback: Edit question value (for ENTER key)
  */
 EFI_STATUS HiiBrowserCallback_EditQuestion(MENU_ITEM *Item, VOID *Context)
@@ -1676,14 +1968,12 @@ EFI_STATUS HiiBrowserCallback_EditQuestion(MENU_ITEM *Item, VOID *Context)
     else if (Question->Type == EFI_IFR_ONE_OF_OP)
     {
         // Show OneOf selection menu
-        MenuShowMessage(MenuCtx, L"OneOf", L"OneOf selection not yet implemented");
-        return EFI_SUCCESS;
+        return HiiBrowserEditOneOfQuestion(HiiCtx, Question, Item, MenuCtx);
     }
     else if (Question->Type == EFI_IFR_STRING_OP)
     {
         // Edit string value
-        MenuShowMessage(MenuCtx, L"String", L"String editing not yet implemented");
-        return EFI_SUCCESS;
+        return HiiBrowserEditStringQuestion(HiiCtx, Question, Item, MenuCtx);
     }
     
     return EFI_UNSUPPORTED;

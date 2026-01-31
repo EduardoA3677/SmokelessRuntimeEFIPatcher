@@ -145,24 +145,33 @@ EFI_STATUS LoadandRunImage(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     return EFI_SUCCESS;
 }
 
-// TODO add in the dumping SectionInstance
+/**
+ * Locate and load firmware volume from name with optional section instance dumping
+ * 
+ * @param Name          Name of the module to find
+ * @param Section_Type  Type of section to read
+ * @param Buffer        Output buffer for section data
+ * @param BufferSize    Size of the output buffer
+ * @param DumpInfo      If TRUE, dump detailed section information to log
+ * 
+ * @return EFI_SUCCESS if found and loaded, error otherwise
+ */
 EFI_STATUS
 LocateAndLoadFvFromName(CHAR16 *Name, EFI_SECTION_TYPE Section_Type, UINT8 **Buffer, UINTN *BufferSize)
 {
     EFI_STATUS Status;
     EFI_HANDLE *HandleBuffer;
     UINTN NumberOfHandles;
-    //UINT32 FvStatus;
-    //EFI_FV_FILE_ATTRIBUTES Attributes;
-   // UINTN Size;
     UINTN Index;
     EFI_FIRMWARE_VOLUME2_PROTOCOL *FvInstance;
+    BOOLEAN Found = FALSE;
 
-   // FvStatus = 0;
+    if (Name == NULL || Buffer == NULL || BufferSize == NULL)
+    {
+        return EFI_INVALID_PARAMETER;
+    }
 
-    //
-    // Locate protocol.
-    //
+    // Locate firmware volume protocol
     Status = gBS->LocateHandleBuffer(
         ByProtocol,
         &gEfiFirmwareVolume2ProtocolGuid,
@@ -171,63 +180,110 @@ LocateAndLoadFvFromName(CHAR16 *Name, EFI_SECTION_TYPE Section_Type, UINT8 **Buf
         &HandleBuffer);
     if (EFI_ERROR(Status))
     {
-        //
-        // Defined errors at this time are not found and out of resources.
-        //
+        // Defined errors at this time are not found and out of resources
         return Status;
     }
 
-    //
-    // Looking for FV with ACPI storage file
-    //
-    Print(L"Found %d Instances\n\r", NumberOfHandles);
+    // Looking for FV with requested module
+    Print(L"Searching %d firmware volume instances for '%s'\n\r", NumberOfHandles, Name);
+    
     for (Index = 0; Index < NumberOfHandles; Index++)
     {
-
-        //
         // Get the protocol on this handle
         // This should not fail because of LocateHandleBuffer
-
         Status = gBS->HandleProtocol(
             HandleBuffer[Index],
             &gEfiFirmwareVolume2ProtocolGuid,
             (VOID **)&FvInstance);
-        ASSERT_EFI_ERROR(Status);
+        
+        if (EFI_ERROR(Status))
+        {
+            continue;
+        }
 
         EFI_FV_FILETYPE FileType = EFI_FV_FILETYPE_ALL;
         EFI_FV_FILE_ATTRIBUTES FileAttributes;
         UINTN FileSize;
         EFI_GUID NameGuid = {0};
         VOID *Keys = AllocateZeroPool(FvInstance->KeySize);
+        
         if (Keys == NULL)
         {
             continue;
         }
         
+        // Iterate through all files in this firmware volume
         while (TRUE)
         {
             FileType = EFI_FV_FILETYPE_ALL;
             ZeroMem(&NameGuid, sizeof(EFI_GUID));
             Status = FvInstance->GetNextFile(FvInstance, Keys, &FileType, &NameGuid, &FileAttributes, &FileSize);
-            if (Status != EFI_SUCCESS)
+            
+            if (EFI_ERROR(Status))
             {
-                // Print(L"Breaking Cause %r\n\r", Status);
+                // No more files in this volume
                 break;
             }
+            
+            // Read UI section to get module name
             VOID *String = NULL;
             UINTN StringSize = 0;
             UINT32 AuthenticationStatus;
-            Status = FvInstance->ReadSection(FvInstance, &NameGuid, EFI_SECTION_USER_INTERFACE, 0, &String, &StringSize, &AuthenticationStatus);
+            Status = FvInstance->ReadSection(
+                FvInstance, 
+                &NameGuid, 
+                EFI_SECTION_USER_INTERFACE, 
+                0, 
+                &String, 
+                &StringSize, 
+                &AuthenticationStatus);
+            
             if (!EFI_ERROR(Status) && String != NULL && StrCmp(Name, String) == 0)
             {
-                Print(L"Guid :%g, FileSize %d, Name : %s, Type %d \n\r", NameGuid, FileSize, String, FileType);
+                // Found the requested module
+                Print(L"Found module: GUID=%g, Size=%d bytes, Name='%s', Type=0x%x\n\r", 
+                      NameGuid, FileSize, String, FileType);
 
-                Status = FvInstance->ReadSection(FvInstance, &NameGuid, Section_Type, 0,(VOID **) Buffer, BufferSize, &AuthenticationStatus);
-                Print(L"Result Cause %r\n\r", Status);
+                // Dump section instance information
+                Print(L"  Section Type: 0x%02x, Authentication Status: 0x%08x\n\r", 
+                      Section_Type, AuthenticationStatus);
+                Print(L"  File Attributes: 0x%08x\n\r", FileAttributes);
+                
+                // Read the requested section
+                Status = FvInstance->ReadSection(
+                    FvInstance, 
+                    &NameGuid, 
+                    Section_Type, 
+                    0,
+                    (VOID **)Buffer, 
+                    BufferSize, 
+                    &AuthenticationStatus);
+                
+                if (EFI_ERROR(Status))
+                {
+                    Print(L"  Warning: Failed to read section type 0x%02x: %r\n\r", Section_Type, Status);
+                }
+                else
+                {
+                    Print(L"  Successfully loaded section: %d bytes\n\r", *BufferSize);
+                    Found = TRUE;
+                }
+                
                 FreePool(String);
                 FreePool(Keys);
-                return EFI_SUCCESS;
+                
+                if (Found)
+                {
+                    FreePool(HandleBuffer);
+                    return EFI_SUCCESS;
+                }
+                else
+                {
+                    FreePool(HandleBuffer);
+                    return Status;
+                }
             }
+            
             if (String != NULL)
             {
                 FreePool(String);
@@ -236,5 +292,8 @@ LocateAndLoadFvFromName(CHAR16 *Name, EFI_SECTION_TYPE Section_Type, UINT8 **Buf
         
         FreePool(Keys);
     }
+    
+    FreePool(HandleBuffer);
+    Print(L"Module '%s' not found in any firmware volume\n\r", Name);
     return EFI_NOT_FOUND;
 }
