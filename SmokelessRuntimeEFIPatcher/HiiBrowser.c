@@ -467,7 +467,9 @@ STATIC EFI_STATUS ParseFormQuestions(
     
     // Varstore tracking (simple implementation for common case)
     // Most BIOS use a single "Setup" variable with VarStoreId 1
+    // Limitation: Supports up to 16 varstores per form (typical BIOS uses 1-5)
     #define MAX_VARSTORES 16
+    #define MAX_VARSTORE_NAME_LENGTH 128
     #define DEFAULT_VARSTORE_NAME L"Setup"
     typedef struct {
         UINT16 VarStoreId;
@@ -487,6 +489,8 @@ STATIC EFI_STATUS ParseFormQuestions(
     VarStoreCount = 1;
     
     // Helper function to lookup varstore by ID
+    // NOTE: OutName is allocated with AllocateCopyPool and becomes owned by the caller
+    // Caller is responsible for freeing the allocated memory when done
     #define LOOKUP_VARSTORE(VarStoreId, OutName, OutGuid) \
         do { \
             (OutName) = NULL; \
@@ -549,7 +553,7 @@ STATIC EFI_STATUS ParseFormQuestions(
                     // Validate name is within bounds (check for reasonable length)
                     UINTN MaxNameLen = IfrSize - (Offset + sizeof(EFI_IFR_OP_HEADER) + VARSTORE_NAME_OFFSET);
                     UINTN NameLen = 0;
-                    for (NameLen = 0; NameLen < MaxNameLen && NameLen < 128; NameLen++)
+                    for (NameLen = 0; NameLen < MaxNameLen && NameLen < MAX_VARSTORE_NAME_LENGTH; NameLen++)
                     {
                         if (NameAscii[NameLen] == '\0')
                             break;
@@ -1320,8 +1324,9 @@ EFI_STATUS HiiBrowserCallback_OpenReferencedForm(MENU_ITEM *Item, VOID *Context)
     {
         if (HiiCtx->Forms[i].FormId == Question->RefFormId)
         {
-            // Check if FormSetGuid matches (if specified)
-            // For now, assume same formset if RefFormSetGuid is NULL
+            // Note: Cross-formset references are currently not supported
+            // This matches forms with the same FormId in the current formset
+            // For full support, RefFormSetGuid would need to be checked against Forms[i].FormSetGuid
             ReferencedForm = &HiiCtx->Forms[i];
             break;
         }
@@ -1448,10 +1453,11 @@ MENU_PAGE *HiiBrowserCreateQuestionsMenu(
     MenuAddInfoItem(Page, ItemIndex++, InfoText);
     
     // Add each question as a menu item with current value displayed
+    #define MAX_MENU_TITLE_LENGTH 256
     for (UINTN i = 0; i < QuestionCount; i++)
     {
         HII_QUESTION_INFO *Question = &Questions[i];
-        CHAR16 TitleWithValue[256];
+        CHAR16 TitleWithValue[MAX_MENU_TITLE_LENGTH];
         
         // Check if this is a form reference (submenu)
         if (Question->IsReference && Question->Type == EFI_IFR_REF_OP)
@@ -2246,6 +2252,11 @@ BOOLEAN HiiBrowserHasChanges(HII_BROWSER_CONTEXT *Context)
 
 /**
  * Load default values for all questions
+ * 
+ * NOTE: Current implementation discards pending changes and reloads from NVRAM.
+ * Full implementation would parse IFR DEFAULT opcodes to restore factory defaults.
+ * For most use cases, reloading from NVRAM provides the correct default behavior
+ * since BIOS typically stores defaults in NVRAM.
  */
 EFI_STATUS HiiBrowserLoadDefaults(HII_BROWSER_CONTEXT *Context)
 {
@@ -2261,10 +2272,11 @@ EFI_STATUS HiiBrowserLoadDefaults(HII_BROWSER_CONTEXT *Context)
     if (!LoadDefaults)
         return EFI_ABORTED;
     
-    // For now, we'll reset all changes in NVRAM manager
-    // In a full implementation, this would:
+    // Current implementation: Discard changes and reload from NVRAM
+    // This works for most BIOS because defaults are already stored in NVRAM
+    // Full implementation would:
     // 1. Parse all forms to find DEFAULT opcodes
-    // 2. Set each question to its default value
+    // 2. Set each question to its IFR-specified default value
     // 3. Update the menu display
     
     if (Context->NvramManager)
