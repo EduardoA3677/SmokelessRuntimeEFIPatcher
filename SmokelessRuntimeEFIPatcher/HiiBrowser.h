@@ -13,6 +13,24 @@
 #include "MenuUI.h"
 #include "NvramManager.h"
 
+// Vendor type enumeration
+typedef enum {
+    VENDOR_UNKNOWN = 0,
+    VENDOR_HP,
+    VENDOR_AMD,
+    VENDOR_INTEL,
+    VENDOR_GENERIC
+} VENDOR_TYPE;
+
+// Form category flags
+#define FORM_CATEGORY_STANDARD      0x00
+#define FORM_CATEGORY_MANUFACTURING 0x01
+#define FORM_CATEGORY_ENGINEERING   0x02
+#define FORM_CATEGORY_DEBUG         0x04
+#define FORM_CATEGORY_DEMO          0x08
+#define FORM_CATEGORY_OEM           0x10
+#define FORM_CATEGORY_HIDDEN        0x20
+
 // HII Form information
 typedef struct {
     EFI_HII_HANDLE HiiHandle;
@@ -20,6 +38,8 @@ typedef struct {
     UINT16 FormId;
     CHAR16 *Title;
     BOOLEAN IsHidden;       // Was this form suppressed/hidden
+    VENDOR_TYPE Vendor;     // Detected vendor (HP, AMD, Intel, etc.)
+    UINT8 CategoryFlags;    // Form category flags (manufacturing, engineering, etc.)
 } HII_FORM_INFO;
 
 // HII OneOf Option information
@@ -66,7 +86,8 @@ typedef struct {
     HII_FORM_INFO *Forms;
     UINTN FormCount;
     
-    NVRAM_MANAGER *NvramManager;  // NEW: NVRAM manager
+    NVRAM_MANAGER *NvramManager;  // NVRAM manager
+    DATABASE_CONTEXT *Database;   // Configuration database
     MENU_CONTEXT *MenuContext;
 } HII_BROWSER_CONTEXT;
 

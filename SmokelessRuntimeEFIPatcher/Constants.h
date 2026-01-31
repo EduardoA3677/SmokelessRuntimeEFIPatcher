@@ -72,6 +72,21 @@
 #define KEYWORD_EXIT            L"EXIT"
 #define KEYWORD_SAVE            L"SAVE"
 
+// Vendor-specific form keywords
+#define KEYWORD_HP              L"HP"
+#define KEYWORD_AMD             L"AMD"
+#define KEYWORD_CBS             L"CBS"  // AMD CBS menu
+#define KEYWORD_PROMONTORY      L"PROMONTORY"  // AMD chipset
+#define KEYWORD_INTEL           L"INTEL"
+#define KEYWORD_ME              L"ME"  // Intel Management Engine
+#define KEYWORD_MANUFACTURING   L"MANUFACTURING"
+#define KEYWORD_ENGINEER        L"ENGINEER"
+#define KEYWORD_DEBUG           L"DEBUG"
+#define KEYWORD_DEMO            L"DEMO"
+#define KEYWORD_HIDDEN          L"HIDDEN"
+#define KEYWORD_OEM             L"OEM"
+#define KEYWORD_VENDOR          L"VENDOR"
+
 // Tab indices
 #define TAB_INDEX_MAIN          0
 #define TAB_INDEX_ADVANCED      1
