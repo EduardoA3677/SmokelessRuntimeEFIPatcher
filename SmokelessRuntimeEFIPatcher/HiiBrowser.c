@@ -1423,6 +1423,10 @@ MENU_PAGE *HiiBrowserCreateQuestionsMenu(
             // Create a stub page for the referenced form that will be lazily loaded
             // We'll use a special callback to handle this
             CHAR16 *AllocatedTitle = AllocateCopyPool(StrSize(TitleWithValue), TitleWithValue);
+            if (AllocatedTitle == NULL)
+            {
+                LOG_HII_WARN("Failed to allocate title for form reference, using prompt");
+            }
             
             MenuAddActionItem(
                 Page,
@@ -1486,6 +1490,10 @@ MENU_PAGE *HiiBrowserCreateQuestionsMenu(
             
             // Allocate and copy the title
             CHAR16 *AllocatedTitle = AllocateCopyPool(StrSize(TitleWithValue), TitleWithValue);
+            if (AllocatedTitle == NULL)
+            {
+                LOG_HII_WARN("Failed to allocate title for question, using prompt");
+            }
             
             MenuAddActionItem(
                 Page,

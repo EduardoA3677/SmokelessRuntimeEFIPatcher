@@ -906,18 +906,20 @@ EFI_STATUS MenuGoBack(MENU_CONTEXT *Context)
     // In tab mode with submenus open
     if (Context->UseTabMode && Context->CurrentPage != NULL && Context->CurrentPage->Parent != NULL)
     {
+        MENU_PAGE *ParentPage = Context->CurrentPage->Parent;
+        
         // If current page has a parent AND is not a root menu, go back to it
         // This allows navigation: Tab Root -> Submenu -> Sub-submenu with proper back navigation
-        if (!Context->CurrentPage->Parent->IsRootMenu || Context->CurrentPage->Depth > 1)
+        if (!ParentPage->IsRootMenu || Context->CurrentPage->Depth > 1)
         {
             CHAR16 *FromTitle = Context->CurrentPage->Title ? Context->CurrentPage->Title : L"(unnamed)";
-            CHAR16 *ToTitle = Context->CurrentPage->Parent->Title ? Context->CurrentPage->Parent->Title : L"(unnamed)";
+            CHAR16 *ToTitle = ParentPage->Title ? ParentPage->Title : L"(unnamed)";
             
             LOG_MENU_DEBUG("Tab mode back navigation: '%s' (depth %u) -> '%s' (depth %u)", 
                            FromTitle, Context->CurrentPage->Depth,
-                           ToTitle, Context->CurrentPage->Parent->Depth);
+                           ToTitle, ParentPage->Depth);
             
-            Context->CurrentPage = Context->CurrentPage->Parent;
+            Context->CurrentPage = ParentPage;
             
             // Ensure we select a valid enabled item
             if (Context->CurrentPage->ItemCount > 0)

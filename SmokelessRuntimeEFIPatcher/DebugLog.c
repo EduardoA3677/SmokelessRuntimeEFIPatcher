@@ -44,37 +44,47 @@ VOID LogSetEnabled(BOOLEAN Enabled)
 
 /**
  * Core logging function
+ * NOTE: Format string should use %s for CHAR16* strings
+ * This function will handle the conversion properly
  */
 VOID LogPrint(LOG_LEVEL Level, CONST CHAR8 *Module, CONST CHAR8 *Format, ...)
 {
     VA_LIST Marker;
-    CHAR8 Buffer[512];
+    CHAR16 FormatBuffer[512];
+    CHAR16 OutputBuffer[512];
+    UINTN FormatLen;
     
     // Check if logging is enabled and level is appropriate
     if (!gLoggingEnabled || Level < gCurrentLogLevel)
         return;
     
-    // Format: [LEVEL][MODULE] Message
+    // Convert ASCII format string to Unicode
+    FormatLen = AsciiStrLen(Format);
+    for (UINTN i = 0; i < FormatLen && i < 511; i++)
+    {
+        FormatBuffer[i] = (CHAR16)Format[i];
+    }
+    FormatBuffer[FormatLen < 511 ? FormatLen : 511] = L'\0';
+    
+    // Format the output with Unicode format string
+    VA_START(Marker, Format);
+    UnicodeVSPrint(OutputBuffer, sizeof(OutputBuffer), FormatBuffer, Marker);
+    VA_END(Marker);
+    
+    // Print with level and module prefix
     if (Module != NULL)
     {
-        AsciiSPrint(Buffer, sizeof(Buffer), "[%a][%a] ", 
-                   Level < LOG_LEVEL_NONE ? LogLevelStrings[Level] : "UNKNOWN",
-                   Module);
+        Print(L"[%a][%a] %s\n",
+              Level < LOG_LEVEL_NONE ? LogLevelStrings[Level] : "UNKNOWN",
+              Module,
+              OutputBuffer);
     }
     else
     {
-        AsciiSPrint(Buffer, sizeof(Buffer), "[%a] ", 
-                   Level < LOG_LEVEL_NONE ? LogLevelStrings[Level] : "UNKNOWN");
+        Print(L"[%a] %s\n",
+              Level < LOG_LEVEL_NONE ? LogLevelStrings[Level] : "UNKNOWN",
+              OutputBuffer);
     }
-    
-    Print(L"%a", Buffer);
-    
-    // Print the formatted message
-    VA_START(Marker, Format);
-    AsciiVSPrint(Buffer, sizeof(Buffer), Format, Marker);
-    VA_END(Marker);
-    
-    Print(L"%a\n", Buffer);
 }
 
 /**
@@ -148,9 +158,10 @@ VOID LogDumpBuffer(LOG_LEVEL Level, CONST CHAR8 *Module, CONST CHAR8 *Descriptio
     
     Data = (CONST UINT8 *)Buffer;
     
+    // Use %a for ASCII strings (CHAR8*), not casting to CHAR16*
     Print(L"[%a][%a] %a (%u bytes):\n", 
-          Level < LOG_LEVEL_NONE ? (CHAR16 *)LogLevelStrings[Level] : L"UNKNOWN",
-          Module ? (CHAR16 *)Module : L"",
+          Level < LOG_LEVEL_NONE ? LogLevelStrings[Level] : "UNKNOWN",
+          Module ? Module : "",
           Description ? Description : "Buffer",
           Size);
     
