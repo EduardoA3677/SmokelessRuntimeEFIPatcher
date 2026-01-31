@@ -162,6 +162,26 @@ EFI_STATUS HiiBrowserEditQuestion(
 );
 
 /**
+ * Edit OneOf question (dropdown selection)
+ */
+EFI_STATUS HiiBrowserEditOneOfQuestion(
+    HII_BROWSER_CONTEXT *Context,
+    HII_QUESTION_INFO *Question,
+    MENU_ITEM *Item,
+    MENU_CONTEXT *MenuCtx
+);
+
+/**
+ * Edit String question
+ */
+EFI_STATUS HiiBrowserEditStringQuestion(
+    HII_BROWSER_CONTEXT *Context,
+    HII_QUESTION_INFO *Question,
+    MENU_ITEM *Item,
+    MENU_CONTEXT *MenuCtx
+);
+
+/**
  * Callback: Edit question value (for ENTER key)
  */
 EFI_STATUS HiiBrowserCallback_EditQuestion(MENU_ITEM *Item, VOID *Context);

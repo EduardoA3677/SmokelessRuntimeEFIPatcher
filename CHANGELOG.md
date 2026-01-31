@@ -2,6 +2,49 @@
 
 All notable changes to SmokelessRuntimeEFIPatcher will be documented in this file.
 
+## [0.3.3] - 2026-01-31
+
+### Implemented - Remaining TODOs
+- **Section instance dumping**: Completed implementation of firmware volume section dumping
+  - Enhanced `LocateAndLoadFvFromName` with detailed diagnostic information
+  - Added module search progress reporting with GUID, size, and type information
+  - Added section authentication status and file attributes logging
+  - Improved error handling with proper resource cleanup
+  - Added parameter validation for safer operation
+
+### Implemented - OneOf Question Editing
+- **Full OneOf support**: Interactive dropdown selection interface for BIOS options
+  - Visual selection menu with highlighted current option
+  - Keyboard navigation with Up/Down arrows
+  - Support for large option lists with scrolling (max 15 visible)
+  - Real-time value update and menu refresh
+  - Proper memory management for option text
+
+### Implemented - String Question Editing
+- **String input functionality**: Interactive text input for string-type BIOS settings
+  - Visual input dialog with live character display
+  - Backspace support for character deletion
+  - Maximum 256 character input buffer
+  - Truncated display for long strings (44 chars visible)
+  - Proper string allocation and cleanup
+  - Modified indicator (*) for changed values
+
+### Improved - Code Quality
+- **Better diagnostic output**: Enhanced firmware module search with detailed logging
+  - Shows number of firmware volumes being searched
+  - Reports module name, GUID, size, and file type when found
+  - Displays section read status and data size
+  - Clearer error messages when modules not found
+- **Removed commented code**: Cleaned up unused variable declarations
+- **Enhanced documentation**: Added comprehensive function documentation
+
+### Technical Details
+All BIOS question types now fully supported:
+- ☑ Checkbox: Toggle on/off
+- ⚙ Numeric: +/- increment/decrement
+- ▼ OneOf: Dropdown selection with navigation
+- 📝 String: Text input with editing
+
 ## [0.3.2] - 2026-01-31
 
 ### Added - Navigation Improvements
