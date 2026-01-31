@@ -1,5 +1,6 @@
 #include "MenuUI.h"
 #include "HiiBrowser.h"
+#include "DebugLog.h"
 #include <Library/BaseMemoryLib.h>
 #include <Library/PrintLib.h>
 
@@ -100,6 +101,12 @@ MENU_PAGE *MenuCreatePage(CHAR16 *Title, UINTN ItemCount)
     Page->ItemCount = ItemCount;
     Page->SelectedIndex = 0;
     Page->Parent = NULL;
+    Page->Depth = 0;
+    Page->IsRootMenu = FALSE;
+    Page->IsSubMenu = FALSE;
+    Page->FormId = 0;
+    
+    LOG_MENU_DEBUG("Created menu page '%s' with %u items", Title, ItemCount);
     
     return Page;
 }
@@ -159,7 +166,14 @@ EFI_STATUS MenuAddSubmenuItem(
     Item->Enabled = TRUE;
     Item->Hidden = FALSE;
     
+    // Set parent relationship and update depth
     Submenu->Parent = Page;
+    Submenu->Depth = Page->Depth + 1;
+    Submenu->IsSubMenu = TRUE;
+    
+    LOG_MENU_DEBUG("Added submenu '%s' to page '%s' (depth %u -> %u)", 
+                   Title, Page->Title ? Page->Title : L"(unnamed)", 
+                   Page->Depth, Submenu->Depth);
     
     return EFI_SUCCESS;
 }
@@ -253,16 +267,36 @@ EFI_STATUS MenuAddTab(
 EFI_STATUS MenuSwitchTab(MENU_CONTEXT *Context, UINTN TabIndex)
 {
     if (Context == NULL || !Context->UseTabMode || Context->Tabs == NULL)
+    {
+        LOG_MENU_ERROR("MenuSwitchTab: Invalid parameters - Context=%p, UseTabMode=%u, Tabs=%p",
+                       Context, Context ? Context->UseTabMode : 0, Context ? Context->Tabs : NULL);
         return EFI_INVALID_PARAMETER;
+    }
     
     if (TabIndex >= Context->TabCount)
+    {
+        LOG_MENU_ERROR("MenuSwitchTab: TabIndex %u >= TabCount %u", TabIndex, Context->TabCount);
         return EFI_INVALID_PARAMETER;
+    }
     
     if (!Context->Tabs[TabIndex].Enabled)
+    {
+        LOG_MENU_ERROR("MenuSwitchTab: Tab %u is not enabled", TabIndex);
         return EFI_ACCESS_DENIED;
+    }
+    
+    if (Context->Tabs[TabIndex].Page == NULL)
+    {
+        LOG_MENU_ERROR("MenuSwitchTab: Tab %u has NULL page", TabIndex);
+        return EFI_NOT_READY;
+    }
     
     Context->CurrentTabIndex = TabIndex;
     Context->CurrentPage = Context->Tabs[TabIndex].Page;
+    
+    LOG_MENU_INFO("Switched to tab %u, CurrentPage=%p, ItemCount=%u",
+                  TabIndex, Context->CurrentPage, 
+                  Context->CurrentPage ? Context->CurrentPage->ItemCount : 0);
     
     // Reset selection to first enabled item
     if (Context->CurrentPage != NULL && Context->CurrentPage->ItemCount > 0)
@@ -823,6 +857,15 @@ EFI_STATUS MenuRun(MENU_CONTEXT *Context, MENU_PAGE *StartPage)
             StartPage->SelectedIndex = FindFirstEnabledItem(StartPage);
         }
     }
+    else
+    {
+        // In tab mode, verify CurrentPage is set
+        if (Context->CurrentPage == NULL)
+        {
+            LOG_MENU_ERROR("Tab mode enabled but CurrentPage is NULL - MenuSwitchTab may have failed");
+            return EFI_NOT_READY;
+        }
+    }
     
     Context->Running = TRUE;
     
@@ -858,6 +901,15 @@ EFI_STATUS MenuNavigateTo(MENU_CONTEXT *Context, MENU_PAGE *Page)
     if (Context == NULL || Page == NULL)
         return EFI_INVALID_PARAMETER;
     
+    CHAR16 *FromTitle = Context->CurrentPage ? Context->CurrentPage->Title : L"(none)";
+    CHAR16 *ToTitle = Page->Title ? Page->Title : L"(unnamed)";
+    
+    LOG_MENU_DEBUG("Navigating from '%s' (depth %u) to '%s' (depth %u)", 
+                   FromTitle, 
+                   Context->CurrentPage ? Context->CurrentPage->Depth : 0,
+                   ToTitle, 
+                   Page->Depth);
+    
     Context->CurrentPage = Page;
     
     // Ensure we select a valid enabled item
@@ -866,6 +918,7 @@ EFI_STATUS MenuNavigateTo(MENU_CONTEXT *Context, MENU_PAGE *Page)
         Page->SelectedIndex = FindFirstEnabledItem(Page);
     }
     
+    LogNavigation(FromTitle, ToTitle, Page->Depth);
     MenuDraw(Context);
     
     return EFI_SUCCESS;
@@ -882,29 +935,57 @@ EFI_STATUS MenuGoBack(MENU_CONTEXT *Context)
     // In tab mode with submenus open
     if (Context->UseTabMode && Context->CurrentPage != NULL && Context->CurrentPage->Parent != NULL)
     {
-        // If current page has a parent, go back to it
-        Context->CurrentPage = Context->CurrentPage->Parent;
+        MENU_PAGE *ParentPage = Context->CurrentPage->Parent;
         
-        // Ensure we select a valid enabled item
-        if (Context->CurrentPage->ItemCount > 0)
+        // If current page has a parent AND is not a root menu, go back to it
+        // This allows navigation: Tab Root -> Submenu -> Sub-submenu with proper back navigation
+        if (!ParentPage->IsRootMenu || Context->CurrentPage->Depth > 1)
         {
-            Context->CurrentPage->SelectedIndex = FindFirstEnabledItem(Context->CurrentPage);
+            CHAR16 *FromTitle = Context->CurrentPage->Title ? Context->CurrentPage->Title : L"(unnamed)";
+            CHAR16 *ToTitle = ParentPage->Title ? ParentPage->Title : L"(unnamed)";
+            
+            LOG_MENU_DEBUG("Tab mode back navigation: '%s' (depth %u) -> '%s' (depth %u)", 
+                           FromTitle, Context->CurrentPage->Depth,
+                           ToTitle, ParentPage->Depth);
+            
+            Context->CurrentPage = ParentPage;
+            
+            // Ensure we select a valid enabled item
+            if (Context->CurrentPage->ItemCount > 0)
+            {
+                Context->CurrentPage->SelectedIndex = FindFirstEnabledItem(Context->CurrentPage);
+            }
+            
+            LogNavigation(FromTitle, ToTitle, Context->CurrentPage->Depth);
+            MenuDraw(Context);
+            return EFI_SUCCESS;
         }
-        
-        MenuDraw(Context);
-        return EFI_SUCCESS;
+        else
+        {
+            // We're at a root tab menu, don't go back further, just stay here
+            LOG_MENU_DEBUG("At root tab level, not going back");
+            return EFI_SUCCESS;
+        }
     }
     
     // In non-tab mode or at root level
     if (Context->CurrentPage == Context->RootPage || Context->CurrentPage->Parent == NULL)
     {
         // At root level, exit menu system
+        LOG_MENU_INFO("At root menu, exiting menu system");
         Context->Running = FALSE;
         return EFI_SUCCESS;
     }
     
     if (Context->CurrentPage->Parent != NULL)
     {
+        CHAR16 *FromTitle = Context->CurrentPage->Title ? Context->CurrentPage->Title : L"(unnamed)";
+        CHAR16 *ToTitle = Context->CurrentPage->Parent->Title ? Context->CurrentPage->Parent->Title : L"(unnamed)";
+        
+        LOG_MENU_DEBUG("Standard back navigation: '%s' (depth %u) -> '%s' (depth %u)", 
+                       FromTitle, Context->CurrentPage->Depth,
+                       ToTitle, Context->CurrentPage->Parent->Depth);
+        
         Context->CurrentPage = Context->CurrentPage->Parent;
         
         // Ensure we select a valid enabled item
@@ -913,6 +994,7 @@ EFI_STATUS MenuGoBack(MENU_CONTEXT *Context)
             Context->CurrentPage->SelectedIndex = FindFirstEnabledItem(Context->CurrentPage);
         }
         
+        LogNavigation(FromTitle, ToTitle, Context->CurrentPage->Depth);
         MenuDraw(Context);
     }
     
