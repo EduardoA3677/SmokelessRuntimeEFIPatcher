@@ -468,6 +468,7 @@ STATIC EFI_STATUS ParseFormQuestions(
     // Varstore tracking (simple implementation for common case)
     // Most BIOS use a single "Setup" variable with VarStoreId 1
     #define MAX_VARSTORES 16
+    #define DEFAULT_VARSTORE_NAME L"Setup"
     typedef struct {
         UINT16 VarStoreId;
         CHAR16 *Name;
@@ -480,7 +481,7 @@ STATIC EFI_STATUS ParseFormQuestions(
     
     // Add default "Setup" varstore (most common case)
     VarStores[0].VarStoreId = 1;
-    VarStores[0].Name = L"Setup";
+    VarStores[0].Name = DEFAULT_VARSTORE_NAME;
     // Use a generic GUID (will be overridden if found in IFR)
     VarStores[0].Guid = gEfiGlobalVariableGuid;
     VarStoreCount = 1;
@@ -530,31 +531,51 @@ STATIC EFI_STATUS ParseFormQuestions(
             case 0x26:  // EFI_IFR_VARSTORE_EFI_OP
             {
                 // This opcode defines an EFI variable store
-                // Structure: VarStoreId (UINT16), Guid (EFI_GUID), Attributes (UINT32), Size (UINT16), Name (NUL-terminated)
-                if (Offset + 8 + sizeof(EFI_GUID) <= IfrSize && VarStoreCount < MAX_VARSTORES)
+                // Structure: VarStoreId (UINT16) + Guid (EFI_GUID) + Attributes (UINT32) + Size (UINT16) + Name (NUL-terminated)
+                // Offsets: VarStoreId=0, Guid=2, Attributes=18, Size=22, Name=24
+                #define VARSTORE_EFI_MIN_SIZE (2 + sizeof(EFI_GUID) + 4 + 2)  // VarStoreId + GUID + Attributes + Size
+                #define VARSTORE_NAME_OFFSET (2 + sizeof(EFI_GUID) + 4 + 2)   // Start of name string
+                
+                if (Offset + sizeof(EFI_IFR_OP_HEADER) + VARSTORE_EFI_MIN_SIZE <= IfrSize && 
+                    VarStoreCount < MAX_VARSTORES)
                 {
                     UINT8 *VarStoreData = &Data[Offset + sizeof(EFI_IFR_OP_HEADER)];
                     UINT16 VarStoreId = *(UINT16 *)VarStoreData;
                     EFI_GUID *VarGuid = (EFI_GUID *)(VarStoreData + 2);
                     
-                    // Name follows the GUID and attributes (skip 4 bytes for attributes + 2 for size)
-                    CHAR8 *NameAscii = (CHAR8 *)(VarStoreData + 2 + sizeof(EFI_GUID) + 4 + 2);
+                    // Name follows the GUID, Attributes, and Size fields
+                    CHAR8 *NameAscii = (CHAR8 *)(VarStoreData + VARSTORE_NAME_OFFSET);
                     
-                    // Convert ASCII name to Unicode
-                    UINTN NameLen = AsciiStrLen(NameAscii) + 1;
-                    CHAR16 *NameUnicode = AllocateZeroPool(NameLen * sizeof(CHAR16));
-                    if (NameUnicode != NULL)
+                    // Validate name is within bounds (check for reasonable length)
+                    UINTN MaxNameLen = IfrSize - (Offset + sizeof(EFI_IFR_OP_HEADER) + VARSTORE_NAME_OFFSET);
+                    UINTN NameLen = 0;
+                    for (NameLen = 0; NameLen < MaxNameLen && NameLen < 128; NameLen++)
                     {
-                        for (UINTN i = 0; i < NameLen; i++)
-                            NameUnicode[i] = (CHAR16)NameAscii[i];
-                        
-                        // Store in varstore array
-                        VarStores[VarStoreCount].VarStoreId = VarStoreId;
-                        VarStores[VarStoreCount].Name = NameUnicode;
-                        CopyMem(&VarStores[VarStoreCount].Guid, VarGuid, sizeof(EFI_GUID));
-                        VarStoreCount++;
+                        if (NameAscii[NameLen] == '\0')
+                            break;
+                    }
+                    
+                    if (NameLen > 0 && NameLen < MaxNameLen)
+                    {
+                        // Convert ASCII name to Unicode
+                        NameLen++;  // Include null terminator
+                        CHAR16 *NameUnicode = AllocateZeroPool(NameLen * sizeof(CHAR16));
+                        if (NameUnicode != NULL)
+                        {
+                            for (UINTN i = 0; i < NameLen; i++)
+                                NameUnicode[i] = (CHAR16)NameAscii[i];
+                            
+                            // Store in varstore array
+                            VarStores[VarStoreCount].VarStoreId = VarStoreId;
+                            VarStores[VarStoreCount].Name = NameUnicode;
+                            CopyMem(&VarStores[VarStoreCount].Guid, VarGuid, sizeof(EFI_GUID));
+                            VarStoreCount++;
+                        }
                     }
                 }
+                
+                #undef VARSTORE_EFI_MIN_SIZE
+                #undef VARSTORE_NAME_OFFSET
                 break;
             }
             
@@ -2234,7 +2255,7 @@ EFI_STATUS HiiBrowserLoadDefaults(HII_BROWSER_CONTEXT *Context)
     // Show confirmation dialog
     BOOLEAN LoadDefaults = FALSE;
     MenuShowConfirm(Context->MenuContext, L"Load Setup Defaults", 
-                   L"Load optimized default values for all settings?\n\rThis will discard all current changes.", 
+                   L"Load optimized default values for all settings?\r\nThis will discard all current changes.", 
                    &LoadDefaults);
     
     if (!LoadDefaults)
@@ -2261,7 +2282,7 @@ EFI_STATUS HiiBrowserLoadDefaults(HII_BROWSER_CONTEXT *Context)
         }
         
         MenuShowMessage(Context->MenuContext, L"Defaults Loaded", 
-                       L"Default values loaded successfully.\n\rChanges have been discarded.");
+                       L"Default values loaded successfully.\r\nChanges have been discarded.");
     }
     else
     {
