@@ -742,9 +742,17 @@ EFI_STATUS MenuHandleInput(MENU_CONTEXT *Context, EFI_INPUT_KEY *Key)
     else if (Key->ScanCode == SCAN_F9)
     {
         // F9: Load Setup Defaults / Optimized Defaults
-        MenuShowMessage(Context, L"Load Defaults", 
-            L"This feature is not yet implemented.\r\n"
-            L"Future versions will restore all settings to defaults.");
+        if (Context->UserData != NULL)
+        {
+            HII_BROWSER_CONTEXT *HiiCtx = (HII_BROWSER_CONTEXT *)Context->UserData;
+            HiiBrowserLoadDefaults(HiiCtx);
+        }
+        else
+        {
+            MenuShowMessage(Context, L"Load Defaults", 
+                L"This feature is not yet implemented.\r\n"
+                L"Future versions will restore all settings to defaults.");
+        }
         return EFI_SUCCESS;
     }
     else if (Key->ScanCode == SCAN_F10)
