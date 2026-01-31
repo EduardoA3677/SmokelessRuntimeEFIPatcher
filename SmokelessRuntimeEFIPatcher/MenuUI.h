@@ -45,6 +45,10 @@ struct _MENU_PAGE {
     UINTN ItemCount;            // Number of items
     UINTN SelectedIndex;        // Currently selected item
     MENU_PAGE *Parent;          // Parent page (for back navigation)
+    UINTN Depth;                // Navigation depth (0 = root)
+    BOOLEAN IsRootMenu;         // TRUE if this is a root/tab menu
+    BOOLEAN IsSubMenu;          // TRUE if this is a submenu
+    UINT16 FormId;              // Associated form ID (for HII forms)
 };
 
 // Menu tab structure for BIOS-like interface

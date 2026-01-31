@@ -1,6 +1,7 @@
 #include "HiiBrowser.h"
 #include "Constants.h"
 #include "IfrOpcodes.h"
+#include "DebugLog.h"
 #include <Library/DebugLib.h>
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/UefiRuntimeServicesTableLib.h>
@@ -31,6 +32,8 @@ EFI_STATUS HiiBrowserInitialize(HII_BROWSER_CONTEXT *Context)
     if (Context == NULL)
         return EFI_INVALID_PARAMETER;
     
+    LOG_HII_INFO("Initializing HII Browser");
+    
     ZeroMem(Context, sizeof(HII_BROWSER_CONTEXT));
     
     // Locate HII Database Protocol
@@ -42,8 +45,11 @@ EFI_STATUS HiiBrowserInitialize(HII_BROWSER_CONTEXT *Context)
     if (EFI_ERROR(Status))
     {
         Print(L"Failed to locate HII Database Protocol: %r\n", Status);
+        LOG_HII_ERROR("Failed to locate HII Database Protocol: %r", Status);
         return Status;
     }
+    
+    LOG_HII_DEBUG("HII Database Protocol located");
     
     // Locate HII Config Routing Protocol
     Status = gBS->LocateProtocol(
@@ -54,8 +60,11 @@ EFI_STATUS HiiBrowserInitialize(HII_BROWSER_CONTEXT *Context)
     if (EFI_ERROR(Status))
     {
         Print(L"Failed to locate HII Config Routing Protocol: %r\n", Status);
+        LOG_HII_ERROR("Failed to locate HII Config Routing Protocol: %r", Status);
         return Status;
     }
+    
+    LOG_HII_DEBUG("HII Config Routing Protocol located");
     
     // Locate Form Browser Protocol (optional, may not be available yet)
     Status = gBS->LocateProtocol(
@@ -63,6 +72,14 @@ EFI_STATUS HiiBrowserInitialize(HII_BROWSER_CONTEXT *Context)
         NULL,
         (VOID **)&Context->FormBrowser2
     );
+    if (EFI_ERROR(Status))
+    {
+        LOG_HII_WARN("Form Browser Protocol not available: %r", Status);
+    }
+    else
+    {
+        LOG_HII_DEBUG("Form Browser Protocol located");
+    }
     // Don't fail if FormBrowser2 is not available yet
     
     // Initialize NVRAM manager
@@ -74,17 +91,25 @@ EFI_STATUS HiiBrowserInitialize(HII_BROWSER_CONTEXT *Context)
     if (EFI_ERROR(Status))
     {
         Print(L"Failed to initialize NVRAM manager: %r\n", Status);
+        LOG_NVRAM_ERROR("Failed to initialize NVRAM manager: %r", Status);
         FreePool(Context->NvramManager);
         Context->NvramManager = NULL;
         return Status;
     }
+    
+    LOG_NVRAM_INFO("NVRAM manager initialized");
     
     // Load Setup variables
     Status = NvramLoadSetupVariables(Context->NvramManager);
     if (EFI_ERROR(Status))
     {
         Print(L"Warning: Could not load Setup variables: %r\n", Status);
+        LOG_NVRAM_WARN("Could not load Setup variables: %r", Status);
         // Continue anyway
+    }
+    else
+    {
+        LOG_NVRAM_INFO("Setup variables loaded successfully");
     }
     
     // Initialize configuration database
@@ -92,6 +117,7 @@ EFI_STATUS HiiBrowserInitialize(HII_BROWSER_CONTEXT *Context)
     if (Context->Database == NULL)
     {
         Print(L"Warning: Could not allocate database context\n");
+        LOG_CONFIG_WARN("Could not allocate database context");
         // Continue without database
     }
     else
@@ -100,6 +126,7 @@ EFI_STATUS HiiBrowserInitialize(HII_BROWSER_CONTEXT *Context)
         if (EFI_ERROR(Status))
         {
             Print(L"Warning: Failed to initialize database: %r\n", Status);
+            LOG_CONFIG_WARN("Failed to initialize database: %r", Status);
             FreePool(Context->Database);
             Context->Database = NULL;
             // Continue anyway
@@ -107,8 +134,11 @@ EFI_STATUS HiiBrowserInitialize(HII_BROWSER_CONTEXT *Context)
         else
         {
             Print(L"Database initialized successfully\n");
+            LOG_CONFIG_INFO("Database initialized successfully");
         }
     }
+    
+    LOG_HII_INFO("HII Browser initialization complete");
     
     return EFI_SUCCESS;
 }
@@ -1146,6 +1176,92 @@ EFI_STATUS HiiBrowserGetFormQuestions(
 }
 
 /**
+ * Callback: Open a referenced form (submenu)
+ * This handles EFI_IFR_REF_OP opcodes that point to other forms
+ */
+STATIC EFI_STATUS HiiBrowserCallback_OpenReferencedForm(MENU_ITEM *Item, VOID *Context)
+{
+    if (Item == NULL || Item->Data == NULL || Context == NULL)
+        return EFI_INVALID_PARAMETER;
+    
+    MENU_CONTEXT *MenuCtx = (MENU_CONTEXT *)Context;
+    HII_QUESTION_INFO *RefQuestion = (HII_QUESTION_INFO *)Item->Data;
+    
+    // Get HII browser context
+    HII_BROWSER_CONTEXT *HiiCtx = (HII_BROWSER_CONTEXT *)MenuCtx->UserData;
+    if (HiiCtx == NULL)
+    {
+        MenuShowMessage(MenuCtx, L"Error", L"HII Browser context not available!");
+        return EFI_NOT_READY;
+    }
+    
+    // Find the referenced form in the forms list
+    HII_FORM_INFO *ReferencedForm = NULL;
+    for (UINTN i = 0; i < HiiCtx->FormCount; i++)
+    {
+        if (HiiCtx->Forms[i].FormId == RefQuestion->RefFormId)
+        {
+            ReferencedForm = &HiiCtx->Forms[i];
+            break;
+        }
+    }
+    
+    if (ReferencedForm == NULL)
+    {
+        CHAR16 ErrorMsg[128];
+        UnicodeSPrint(ErrorMsg, sizeof(ErrorMsg), 
+                     L"Referenced form (ID %u) not found!", RefQuestion->RefFormId);
+        MenuShowMessage(MenuCtx, L"Error", ErrorMsg);
+        LOG_HII_WARN("Form reference to FormId %u not found", RefQuestion->RefFormId);
+        return EFI_NOT_FOUND;
+    }
+    
+    LOG_HII_INFO("Opening referenced form '%s' (ID=%u) from depth %u", 
+                 ReferencedForm->Title ? ReferencedForm->Title : L"(unnamed)",
+                 ReferencedForm->FormId,
+                 MenuCtx->CurrentPage->Depth);
+    
+    // Get questions for the referenced form
+    HII_QUESTION_INFO *Questions = NULL;
+    UINTN QuestionCount = 0;
+    
+    EFI_STATUS Status = HiiBrowserGetFormQuestions(HiiCtx, ReferencedForm, &Questions, &QuestionCount);
+    if (EFI_ERROR(Status))
+    {
+        LOG_HII_ERROR("Failed to get questions for referenced form: %r", Status);
+        MenuShowMessage(MenuCtx, L"Error", L"Failed to get form questions!");
+        return Status;
+    }
+    
+    // Create questions menu for the referenced form
+    MENU_PAGE *SubMenuPage = HiiBrowserCreateQuestionsMenu(HiiCtx, ReferencedForm, Questions, QuestionCount);
+    if (SubMenuPage == NULL)
+    {
+        if (Questions)
+            FreePool(Questions);
+        MenuShowMessage(MenuCtx, L"Error", L"Failed to create submenu!");
+        return EFI_OUT_OF_RESOURCES;
+    }
+    
+    // Set parent for back navigation and proper depth tracking
+    SubMenuPage->Parent = MenuCtx->CurrentPage;
+    SubMenuPage->Depth = MenuCtx->CurrentPage->Depth + 1;
+    SubMenuPage->IsSubMenu = TRUE;
+    SubMenuPage->FormId = ReferencedForm->FormId;
+    
+    LOG_HII_DEBUG("Created submenu '%s' at depth %u with %u questions",
+                  ReferencedForm->Title ? ReferencedForm->Title : L"(unnamed)",
+                  SubMenuPage->Depth, QuestionCount);
+    
+    LogFormParsing(ReferencedForm->Title, ReferencedForm->FormId, QuestionCount);
+    
+    // Navigate to submenu page
+    Status = MenuNavigateTo(MenuCtx, SubMenuPage);
+    
+    return Status;
+}
+
+/**
  * Callback: Open form details and show questions
  */
 EFI_STATUS HiiBrowserCallback_OpenForm(MENU_ITEM *Item, VOID *Context)
@@ -1186,8 +1302,17 @@ EFI_STATUS HiiBrowserCallback_OpenForm(MENU_ITEM *Item, VOID *Context)
         return EFI_OUT_OF_RESOURCES;
     }
     
-    // Set parent for back navigation
+    // Set parent for back navigation and proper depth tracking
     QuestionsPage->Parent = MenuCtx->CurrentPage;
+    QuestionsPage->Depth = MenuCtx->CurrentPage->Depth + 1;
+    QuestionsPage->IsSubMenu = TRUE;
+    QuestionsPage->FormId = Form->FormId;
+    
+    LOG_HII_DEBUG("Opening form '%s' (ID=%u) with %u questions at depth %u",
+                  Form->Title ? Form->Title : L"(unnamed)", 
+                  Form->FormId, QuestionCount, QuestionsPage->Depth);
+    
+    LogFormParsing(Form->Title, Form->FormId, QuestionCount);
     
     // Navigate to questions page
     Status = MenuNavigateTo(MenuCtx, QuestionsPage);
@@ -1289,7 +1414,30 @@ MENU_PAGE *HiiBrowserCreateQuestionsMenu(
         CHAR16 TitleWithValue[256];
         
         // Build title with current value
-        if (Question->Type == EFI_IFR_CHECKBOX_OP)
+        if (Question->IsReference && Question->Type == EFI_IFR_REF_OP)
+        {
+            // This is a form reference (submenu), show it with submenu indicator
+            UnicodeSPrint(TitleWithValue, sizeof(TitleWithValue), 
+                         L"%s >", Question->Prompt);
+            
+            // Create a stub page for the referenced form that will be lazily loaded
+            // We'll use a special callback to handle this
+            CHAR16 *AllocatedTitle = AllocateCopyPool(StrSize(TitleWithValue), TitleWithValue);
+            
+            MenuAddActionItem(
+                Page,
+                ItemIndex,
+                AllocatedTitle ? AllocatedTitle : Question->Prompt,
+                Question->HelpText,
+                HiiBrowserCallback_OpenReferencedForm,  // Special callback for submenu
+                Question
+            );
+            
+            LOG_HII_DEBUG("Added form reference '%s' -> FormId %u",
+                          Question->Prompt ? Question->Prompt : L"(unnamed)",
+                          Question->RefFormId);
+        }
+        else if (Question->Type == EFI_IFR_CHECKBOX_OP)
         {
             // Get current checkbox value
             UINT8 Value = 0;
@@ -1332,23 +1480,24 @@ MENU_PAGE *HiiBrowserCreateQuestionsMenu(
         }
         else
         {
+            // Regular questions (not form references)
             UnicodeSPrint(TitleWithValue, sizeof(TitleWithValue), 
                          L"%s", Question->Prompt);
+            
+            // Allocate and copy the title
+            CHAR16 *AllocatedTitle = AllocateCopyPool(StrSize(TitleWithValue), TitleWithValue);
+            
+            MenuAddActionItem(
+                Page,
+                ItemIndex,
+                AllocatedTitle ? AllocatedTitle : Question->Prompt,
+                Question->HelpText,
+                HiiBrowserCallback_EditQuestion,  // Add edit callback
+                Question
+            );
         }
         
-        // Allocate and copy the title
-        CHAR16 *AllocatedTitle = AllocateCopyPool(StrSize(TitleWithValue), TitleWithValue);
-        
-        MenuAddActionItem(
-            Page,
-            ItemIndex,
-            AllocatedTitle ? AllocatedTitle : Question->Prompt,
-            Question->HelpText,
-            HiiBrowserCallback_EditQuestion,  // Add edit callback
-            Question
-        );
-        
-        // Mark as hidden or grayed out
+        // Mark as hidden or grayed out (for all types)
         if (Question->IsHidden || Question->IsGrayedOut)
             Page->Items[ItemIndex].Hidden = TRUE;
         
@@ -2262,6 +2411,13 @@ EFI_STATUS HiiBrowserCreateDynamicTabs(
         
         if (TabPages[t] != NULL)
         {
+            // Mark as root menu (tab pages are root level)
+            TabPages[t]->IsRootMenu = TRUE;
+            TabPages[t]->Depth = 0;
+            TabPages[t]->IsSubMenu = FALSE;
+            
+            LOG_MENU_DEBUG("Created tab page '%s' with %u items", TabNames[t], ItemCount);
+            
             UINTN ItemIndex = 0;
             
             // Add forms belonging to this tab

@@ -19,6 +19,7 @@
   HiiBrowser.c
   NvramManager.c
   ConfigManager.c
+  DebugLog.c
 [Packages]
 	MdePkg/MdePkg.dec
   MdeModulePkg/MdeModulePkg.dec
