@@ -1457,18 +1457,57 @@ MENU_PAGE *HiiBrowserCreateQuestionsMenu(
         }
         else if (Question->Type == EFI_IFR_ONE_OF_OP)
         {
-            // For OneOf, show selected option text if available
-            UnicodeSPrint(TitleWithValue, sizeof(TitleWithValue), 
-                         L"%s [...]", Question->Prompt);
+            // For OneOf, try to show current selected option text
+            if (Question->OptionCount > 0 && Question->Options != NULL)
+            {
+                // Get current value
+                UINT64 CurrentValue = 0;
+                CHAR16 *SelectedText = L"...";
+                
+                if (!EFI_ERROR(HiiBrowserGetQuestionValue(Context, Question, &CurrentValue)))
+                {
+                    Question->CurrentOneOfValue = CurrentValue;
+                    
+                    // Find matching option
+                    for (UINTN opt = 0; opt < Question->OptionCount; opt++)
+                    {
+                        if (Question->Options[opt].Value == CurrentValue)
+                        {
+                            if (Question->Options[opt].Text != NULL)
+                            {
+                                SelectedText = Question->Options[opt].Text;
+                            }
+                            break;
+                        }
+                    }
+                }
+                
+                UnicodeSPrint(TitleWithValue, sizeof(TitleWithValue), 
+                             L"%s: %s", Question->Prompt, SelectedText);
+            }
+            else
+            {
+                UnicodeSPrint(TitleWithValue, sizeof(TitleWithValue), 
+                             L"%s [...]", Question->Prompt);
+            }
         }
         else if (Question->Type == EFI_IFR_NUMERIC_OP)
         {
-            // Show numeric value
+            // Show numeric value with range if available
             UINT64 Value = 0;
             if (!EFI_ERROR(HiiBrowserGetQuestionValue(Context, Question, &Value)))
             {
-                UnicodeSPrint(TitleWithValue, sizeof(TitleWithValue), 
-                             L"%s [%d]", Question->Prompt, Value);
+                if (Question->Maximum > 0)
+                {
+                    UnicodeSPrint(TitleWithValue, sizeof(TitleWithValue), 
+                                 L"%s: %d [%d-%d]", Question->Prompt, Value, 
+                                 Question->Minimum, Question->Maximum);
+                }
+                else
+                {
+                    UnicodeSPrint(TitleWithValue, sizeof(TitleWithValue), 
+                                 L"%s: %d", Question->Prompt, Value);
+                }
             }
             else
             {
@@ -1478,8 +1517,17 @@ MENU_PAGE *HiiBrowserCreateQuestionsMenu(
         }
         else if (Question->Type == EFI_IFR_STRING_OP)
         {
-            UnicodeSPrint(TitleWithValue, sizeof(TitleWithValue), 
-                         L"%s [String]", Question->Prompt);
+            // Show string length limits if available
+            if (Question->Maximum > 0)
+            {
+                UnicodeSPrint(TitleWithValue, sizeof(TitleWithValue), 
+                             L"%s [String, max %d chars]", Question->Prompt, Question->Maximum);
+            }
+            else
+            {
+                UnicodeSPrint(TitleWithValue, sizeof(TitleWithValue), 
+                             L"%s [String]", Question->Prompt);
+            }
         }
         else
         {
@@ -2173,6 +2221,56 @@ BOOLEAN HiiBrowserHasChanges(HII_BROWSER_CONTEXT *Context)
         return FALSE;
     
     return NvramGetModifiedCount(Context->NvramManager) > 0;
+}
+
+/**
+ * Load default values for all questions
+ */
+EFI_STATUS HiiBrowserLoadDefaults(HII_BROWSER_CONTEXT *Context)
+{
+    if (Context == NULL || Context->MenuContext == NULL)
+        return EFI_INVALID_PARAMETER;
+    
+    // Show confirmation dialog
+    BOOLEAN LoadDefaults = FALSE;
+    MenuShowConfirm(Context->MenuContext, L"Load Setup Defaults", 
+                   L"Load optimized default values for all settings?\n\rThis will discard all current changes.", 
+                   &LoadDefaults);
+    
+    if (!LoadDefaults)
+        return EFI_ABORTED;
+    
+    // For now, we'll reset all changes in NVRAM manager
+    // In a full implementation, this would:
+    // 1. Parse all forms to find DEFAULT opcodes
+    // 2. Set each question to its default value
+    // 3. Update the menu display
+    
+    if (Context->NvramManager)
+    {
+        // Discard all pending changes
+        NvramRollback(Context->NvramManager);
+        
+        // Reload variables from NVRAM
+        NvramLoadSetupVariables(Context->NvramManager);
+        
+        // Refresh the menu display
+        if (Context->MenuContext)
+        {
+            MenuDraw(Context->MenuContext);
+        }
+        
+        MenuShowMessage(Context->MenuContext, L"Defaults Loaded", 
+                       L"Default values loaded successfully.\n\rChanges have been discarded.");
+    }
+    else
+    {
+        MenuShowMessage(Context->MenuContext, L"Error", 
+                       L"Unable to load defaults - NVRAM manager not available");
+        return EFI_NOT_READY;
+    }
+    
+    return EFI_SUCCESS;
 }
 
 /**

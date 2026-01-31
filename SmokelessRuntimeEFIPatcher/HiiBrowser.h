@@ -192,6 +192,11 @@ EFI_STATUS HiiBrowserCallback_EditQuestion(MENU_ITEM *Item, VOID *Context);
 EFI_STATUS HiiBrowserCallback_OpenReferencedForm(MENU_ITEM *Item, VOID *Context);
 
 /**
+ * Load default values for all questions
+ */
+EFI_STATUS HiiBrowserLoadDefaults(HII_BROWSER_CONTEXT *Context);
+
+/**
  * Save all modified values to NVRAM
  */
 EFI_STATUS HiiBrowserSaveChanges(HII_BROWSER_CONTEXT *Context);
