@@ -187,6 +187,11 @@ EFI_STATUS HiiBrowserEditStringQuestion(
 EFI_STATUS HiiBrowserCallback_EditQuestion(MENU_ITEM *Item, VOID *Context);
 
 /**
+ * Callback: Open referenced form (submenu navigation)
+ */
+EFI_STATUS HiiBrowserCallback_OpenReferencedForm(MENU_ITEM *Item, VOID *Context);
+
+/**
  * Save all modified values to NVRAM
  */
 EFI_STATUS HiiBrowserSaveChanges(HII_BROWSER_CONTEXT *Context);

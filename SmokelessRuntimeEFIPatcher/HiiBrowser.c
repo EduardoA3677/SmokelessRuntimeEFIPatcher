@@ -1199,6 +1199,74 @@ EFI_STATUS HiiBrowserCallback_OpenForm(MENU_ITEM *Item, VOID *Context)
 }
 
 /**
+ * Callback: Open referenced form (submenu navigation)
+ */
+EFI_STATUS HiiBrowserCallback_OpenReferencedForm(MENU_ITEM *Item, VOID *Context)
+{
+    if (Item == NULL || Item->Data == NULL || Context == NULL)
+        return EFI_INVALID_PARAMETER;
+    
+    MENU_CONTEXT *MenuCtx = (MENU_CONTEXT *)Context;
+    HII_QUESTION_INFO *Question = (HII_QUESTION_INFO *)Item->Data;
+    
+    // Get HII browser context from menu context
+    HII_BROWSER_CONTEXT *HiiCtx = (HII_BROWSER_CONTEXT *)MenuCtx->UserData;
+    if (HiiCtx == NULL)
+    {
+        MenuShowMessage(MenuCtx, L"Error", L"HII Browser context not available!");
+        return EFI_NOT_READY;
+    }
+    
+    // Find the referenced form by FormId
+    HII_FORM_INFO *ReferencedForm = NULL;
+    for (UINTN i = 0; i < HiiCtx->FormCount; i++)
+    {
+        if (HiiCtx->Forms[i].FormId == Question->RefFormId)
+        {
+            // Check if FormSetGuid matches (if specified)
+            // For now, assume same formset if RefFormSetGuid is NULL
+            ReferencedForm = &HiiCtx->Forms[i];
+            break;
+        }
+    }
+    
+    if (ReferencedForm == NULL)
+    {
+        MenuShowMessage(MenuCtx, L"Error", L"Referenced form not found!");
+        return EFI_NOT_FOUND;
+    }
+    
+    // Get questions for the referenced form
+    HII_QUESTION_INFO *Questions = NULL;
+    UINTN QuestionCount = 0;
+    
+    EFI_STATUS Status = HiiBrowserGetFormQuestions(HiiCtx, ReferencedForm, &Questions, &QuestionCount);
+    if (EFI_ERROR(Status))
+    {
+        MenuShowMessage(MenuCtx, L"Error", L"Failed to get referenced form questions!");
+        return Status;
+    }
+    
+    // Create questions menu for the referenced form
+    MENU_PAGE *SubMenuPage = HiiBrowserCreateQuestionsMenu(HiiCtx, ReferencedForm, Questions, QuestionCount);
+    if (SubMenuPage == NULL)
+    {
+        if (Questions)
+            FreePool(Questions);
+        MenuShowMessage(MenuCtx, L"Error", L"Failed to create submenu!");
+        return EFI_OUT_OF_RESOURCES;
+    }
+    
+    // Set parent for back navigation
+    SubMenuPage->Parent = MenuCtx->CurrentPage;
+    
+    // Navigate to submenu page
+    Status = MenuNavigateTo(MenuCtx, SubMenuPage);
+    
+    return Status;
+}
+
+/**
  * Create a menu page from HII forms
  */
 MENU_PAGE *HiiBrowserCreateFormsMenu(HII_BROWSER_CONTEXT *Context)
@@ -1288,8 +1356,15 @@ MENU_PAGE *HiiBrowserCreateQuestionsMenu(
         HII_QUESTION_INFO *Question = &Questions[i];
         CHAR16 TitleWithValue[256];
         
-        // Build title with current value
-        if (Question->Type == EFI_IFR_CHECKBOX_OP)
+        // Check if this is a form reference (submenu)
+        if (Question->IsReference && Question->Type == EFI_IFR_REF_OP)
+        {
+            // Display as submenu with arrow indicator
+            UnicodeSPrint(TitleWithValue, sizeof(TitleWithValue), 
+                         L"%s >", Question->Prompt);
+        }
+        // Build title with current value for other types
+        else if (Question->Type == EFI_IFR_CHECKBOX_OP)
         {
             // Get current checkbox value
             UINT8 Value = 0;
@@ -1930,7 +2005,12 @@ EFI_STATUS HiiBrowserCallback_EditQuestion(MENU_ITEM *Item, VOID *Context)
     }
     
     // Handle based on question type
-    if (Question->Type == EFI_IFR_CHECKBOX_OP)
+    if (Question->IsReference && Question->Type == EFI_IFR_REF_OP)
+    {
+        // Navigate to referenced form (submenu)
+        return HiiBrowserCallback_OpenReferencedForm(Item, Context);
+    }
+    else if (Question->Type == EFI_IFR_CHECKBOX_OP)
     {
         // Toggle checkbox
         UINT8 CurrentValue = 0;
