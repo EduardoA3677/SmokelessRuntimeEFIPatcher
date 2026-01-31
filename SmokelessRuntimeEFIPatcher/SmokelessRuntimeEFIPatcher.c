@@ -27,6 +27,7 @@
 #include "HiiBrowser.h"
 #include "ConfigManager.h"
 #include "NvramManager.h"
+#include "DebugLog.h"
 
 EFI_BOOT_SERVICES *_gBS = NULL;
 EFI_RUNTIME_SERVICES *_gRS = NULL;
@@ -243,6 +244,10 @@ EFI_STATUS EFIAPI SREPEntry(IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *Syst
     
     Print(L"Welcome to SREP (Smokeless Runtime EFI Patcher) %s\n\r", SREP_VERSION_STRING);
     Print(L"AMI BIOS Configuration Editor\n\r");
+    
+    // Initialize logging system
+    LogInitialize(LOG_LEVEL_INFO);  // Start with INFO level, can be changed by user
+    LOG_INFO("MAIN", "SREP version %s starting", SREP_VERSION_STRING);
     
     gBS->SetWatchdogTimer(0, 0, 0, 0);
     

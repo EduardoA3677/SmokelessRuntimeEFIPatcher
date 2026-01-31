@@ -1645,6 +1645,10 @@ EFI_STATUS HiiBrowserEditQuestion(
     UINT64 CurrentValue = 0;
     HiiBrowserGetQuestionValue(Context, Question, &CurrentValue);
     
+    LOG_HII_DEBUG("Editing numeric question: QuestionId=%u, Current=%lu, Min=%lu, Max=%lu, Step=%lu",
+                  Question->QuestionId, CurrentValue, 
+                  Question->Minimum, Question->Maximum, Question->Step);
+    
     // Show edit dialog
     CHAR16 Message[256];
     UnicodeSPrint(Message, sizeof(Message), 
@@ -1700,7 +1704,12 @@ EFI_STATUS HiiBrowserEditQuestion(
         else if (Key.UnicodeChar == CHAR_CARRIAGE_RETURN)
         {
             // Save the value
+            LOG_HII_INFO("Numeric value saved: QuestionId=%u, %lu -> %lu",
+                         Question->QuestionId, CurrentValue, NewValue);
+            
             HiiBrowserSetQuestionValue(Context, Question, &NewValue);
+            LogQuestionEdit(Question->QuestionId, Question->Prompt, 
+                           EFI_IFR_NUMERIC_OP, CurrentValue, NewValue);
             Done = TRUE;
         }
         else if (Key.ScanCode == SCAN_ESC)
@@ -1727,8 +1736,11 @@ EFI_STATUS HiiBrowserSaveChanges(HII_BROWSER_CONTEXT *Context)
     
     UINTN ModifiedCount = NvramGetModifiedCount(Context->NvramManager);
     
+    LOG_NVRAM_INFO("Saving changes: %u modified variables", ModifiedCount);
+    
     if (ModifiedCount == 0)
     {
+        LOG_NVRAM_DEBUG("No changes to save");
         if (Context->MenuContext)
             MenuShowMessage(Context->MenuContext, L"No Changes", L"No modified values to save");
         return EFI_SUCCESS;
@@ -1751,10 +1763,23 @@ EFI_STATUS HiiBrowserSaveChanges(HII_BROWSER_CONTEXT *Context)
     }
     
     if (!Confirm)
+    {
+        LOG_NVRAM_INFO("Save cancelled by user");
         return EFI_ABORTED;
+    }
     
     // Commit changes
+    LOG_NVRAM_INFO("Committing changes to NVRAM...");
     EFI_STATUS Status = NvramCommitChanges(Context->NvramManager);
+    
+    if (EFI_ERROR(Status))
+    {
+        LOG_NVRAM_ERROR("Failed to commit changes: %r", Status);
+    }
+    else
+    {
+        LOG_NVRAM_INFO("All changes committed successfully");
+    }
     
     if (Context->MenuContext)
     {
@@ -1780,8 +1805,12 @@ EFI_STATUS HiiBrowserEditOneOfQuestion(
     if (Context == NULL || Question == NULL || MenuCtx == NULL)
         return EFI_INVALID_PARAMETER;
     
+    LOG_HII_DEBUG("Editing OneOf question: QuestionId=%u, OptionCount=%u, CurrentValue=%lu",
+                  Question->QuestionId, Question->OptionCount, Question->CurrentOneOfValue);
+    
     if (Question->OptionCount == 0 || Question->Options == NULL)
     {
+        LOG_HII_WARN("OneOf question %u has no options", Question->QuestionId);
         MenuShowMessage(MenuCtx, L"No Options", L"This OneOf question has no available options");
         return EFI_NOT_FOUND;
     }
@@ -1873,9 +1902,19 @@ EFI_STATUS HiiBrowserEditOneOfQuestion(
         else if (Key.UnicodeChar == CHAR_CARRIAGE_RETURN)
         {
             // Save the selected value
+            UINT64 OldValue = Question->CurrentOneOfValue;
             UINT64 NewValue = Question->Options[SelectedOption].Value;
+            
+            LOG_HII_INFO("OneOf option selected: QuestionId=%u, %lu -> %lu ('%s')",
+                         Question->QuestionId, OldValue, NewValue,
+                         Question->Options[SelectedOption].Text ? 
+                            Question->Options[SelectedOption].Text : L"(unnamed)");
+            
             HiiBrowserSetQuestionValue(Context, Question, &NewValue);
             Question->CurrentOneOfValue = NewValue;
+            
+            LogQuestionEdit(Question->QuestionId, Question->Prompt, 
+                           EFI_IFR_ONE_OF_OP, OldValue, NewValue);
             
             // Update menu item title
             if (Item->Title)
@@ -1919,6 +1958,10 @@ EFI_STATUS HiiBrowserEditStringQuestion(
 {
     if (Context == NULL || Question == NULL || MenuCtx == NULL)
         return EFI_INVALID_PARAMETER;
+    
+    LOG_HII_DEBUG("Editing string question ID=%u, Prompt='%s'", 
+                  Question->QuestionId, 
+                  Question->Prompt ? Question->Prompt : L"(unnamed)");
     
     EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *ConOut = gST->ConOut;
     EFI_SIMPLE_TEXT_INPUT_PROTOCOL *ConIn = gST->ConIn;
@@ -2004,6 +2047,11 @@ EFI_STATUS HiiBrowserEditStringQuestion(
         
         if (Key.UnicodeChar == CHAR_CARRIAGE_RETURN)
         {
+            LOG_HII_INFO("String edited: QuestionId=%u, OldValue='%s', NewValue='%s'",
+                         Question->QuestionId,
+                         Question->CurrentValue ? (CHAR16 *)Question->CurrentValue : L"(empty)",
+                         InputBuffer);
+            
             // Save the string
             CHAR16 *NewString = AllocateCopyPool(StrSize(InputBuffer), InputBuffer);
             if (NewString != NULL)
@@ -2014,6 +2062,9 @@ EFI_STATUS HiiBrowserEditStringQuestion(
                 }
                 Question->CurrentValue = NewString;
                 HiiBrowserSetQuestionValue(Context, Question, NewString);
+                
+                LogQuestionEdit(Question->QuestionId, Question->Prompt, EFI_IFR_STRING_OP, 
+                               0, 0);  // Can't easily convert string to UINT64
                 
                 // Update menu item title
                 if (Item->Title)
@@ -2079,6 +2130,10 @@ EFI_STATUS HiiBrowserCallback_EditQuestion(MENU_ITEM *Item, VOID *Context)
     }
     
     // Handle based on question type
+    LOG_HII_DEBUG("Edit question callback: Type=%u, QuestionId=%u, Prompt='%s'",
+                  Question->Type, Question->QuestionId,
+                  Question->Prompt ? Question->Prompt : L"(unnamed)");
+    
     if (Question->Type == EFI_IFR_CHECKBOX_OP)
     {
         // Toggle checkbox
@@ -2086,10 +2141,16 @@ EFI_STATUS HiiBrowserCallback_EditQuestion(MENU_ITEM *Item, VOID *Context)
         HiiBrowserGetQuestionValue(HiiCtx, Question, &CurrentValue);
         
         UINT8 NewValue = CurrentValue ? 0 : 1;
+        LOG_HII_INFO("Toggling checkbox: QuestionId=%u, %u -> %u", 
+                     Question->QuestionId, CurrentValue, NewValue);
+        
         EFI_STATUS Status = HiiBrowserSetQuestionValue(HiiCtx, Question, &NewValue);
         
         if (!EFI_ERROR(Status))
         {
+            LogQuestionEdit(Question->QuestionId, Question->Prompt, 
+                           EFI_IFR_CHECKBOX_OP, CurrentValue, NewValue);
+            
             // Free old title and allocate new one
             if (Item->Title)
                 FreePool((VOID *)Item->Title);
