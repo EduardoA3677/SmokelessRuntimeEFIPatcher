@@ -465,6 +465,41 @@ STATIC EFI_STATUS ParseFormQuestions(
     BOOLEAN InSuppressIf = FALSE;
     BOOLEAN InGrayoutIf = FALSE;
     
+    // Varstore tracking (simple implementation for common case)
+    // Most BIOS use a single "Setup" variable with VarStoreId 1
+    #define MAX_VARSTORES 16
+    typedef struct {
+        UINT16 VarStoreId;
+        CHAR16 *Name;
+        EFI_GUID Guid;
+    } VARSTORE_INFO;
+    
+    VARSTORE_INFO VarStores[MAX_VARSTORES];
+    UINTN VarStoreCount = 0;
+    ZeroMem(VarStores, sizeof(VarStores));
+    
+    // Add default "Setup" varstore (most common case)
+    VarStores[0].VarStoreId = 1;
+    VarStores[0].Name = L"Setup";
+    // Use a generic GUID (will be overridden if found in IFR)
+    VarStores[0].Guid = gEfiGlobalVariableGuid;
+    VarStoreCount = 1;
+    
+    // Helper function to lookup varstore by ID
+    #define LOOKUP_VARSTORE(VarStoreId, OutName, OutGuid) \
+        do { \
+            (OutName) = NULL; \
+            for (UINTN _i = 0; _i < VarStoreCount; _i++) { \
+                if (VarStores[_i].VarStoreId == (VarStoreId)) { \
+                    if (VarStores[_i].Name != NULL) { \
+                        (OutName) = AllocateCopyPool(StrSize(VarStores[_i].Name), VarStores[_i].Name); \
+                    } \
+                    CopyMem(&(OutGuid), &VarStores[_i].Guid, sizeof(EFI_GUID)); \
+                    break; \
+                } \
+            } \
+        } while(0)
+    
     // Allocate initial question array
     Questions = AllocateZeroPool(sizeof(HII_QUESTION_INFO) * Capacity);
     if (Questions == NULL)
@@ -491,6 +526,38 @@ STATIC EFI_STATUS ParseFormQuestions(
         
         switch (OpHeader->OpCode)
         {
+            // VARSTORE_EFI opcode - Track EFI variable stores
+            case 0x26:  // EFI_IFR_VARSTORE_EFI_OP
+            {
+                // This opcode defines an EFI variable store
+                // Structure: VarStoreId (UINT16), Guid (EFI_GUID), Attributes (UINT32), Size (UINT16), Name (NUL-terminated)
+                if (Offset + 8 + sizeof(EFI_GUID) <= IfrSize && VarStoreCount < MAX_VARSTORES)
+                {
+                    UINT8 *VarStoreData = &Data[Offset + sizeof(EFI_IFR_OP_HEADER)];
+                    UINT16 VarStoreId = *(UINT16 *)VarStoreData;
+                    EFI_GUID *VarGuid = (EFI_GUID *)(VarStoreData + 2);
+                    
+                    // Name follows the GUID and attributes (skip 4 bytes for attributes + 2 for size)
+                    CHAR8 *NameAscii = (CHAR8 *)(VarStoreData + 2 + sizeof(EFI_GUID) + 4 + 2);
+                    
+                    // Convert ASCII name to Unicode
+                    UINTN NameLen = AsciiStrLen(NameAscii) + 1;
+                    CHAR16 *NameUnicode = AllocateZeroPool(NameLen * sizeof(CHAR16));
+                    if (NameUnicode != NULL)
+                    {
+                        for (UINTN i = 0; i < NameLen; i++)
+                            NameUnicode[i] = (CHAR16)NameAscii[i];
+                        
+                        // Store in varstore array
+                        VarStores[VarStoreCount].VarStoreId = VarStoreId;
+                        VarStores[VarStoreCount].Name = NameUnicode;
+                        CopyMem(&VarStores[VarStoreCount].Guid, VarGuid, sizeof(EFI_GUID));
+                        VarStoreCount++;
+                    }
+                }
+                break;
+            }
+            
             case EFI_IFR_FORM_OP:
             {
                 if (Offset + sizeof(EFI_IFR_FORM) <= IfrSize)
@@ -832,7 +899,7 @@ STATIC EFI_STATUS ParseFormQuestions(
                             // Store variable info
                             if (OneOf->Question.VarStoreId != 0)
                             {
-                                Question->VariableName = NULL;  // Would need varstore lookup
+                                LOOKUP_VARSTORE(OneOf->Question.VarStoreId, Question->VariableName, Question->VariableGuid);
                                 Question->VariableOffset = OneOf->Question.VarStoreInfo.VarOffset;
                             }
                         }
@@ -844,7 +911,7 @@ STATIC EFI_STATUS ParseFormQuestions(
                             
                             if (Checkbox->Question.VarStoreId != 0)
                             {
-                                Question->VariableName = NULL;
+                                LOOKUP_VARSTORE(Checkbox->Question.VarStoreId, Question->VariableName, Question->VariableGuid);
                                 Question->VariableOffset = Checkbox->Question.VarStoreInfo.VarOffset;
                             }
                         }
@@ -861,7 +928,7 @@ STATIC EFI_STATUS ParseFormQuestions(
                             
                             if (Numeric->Question.VarStoreId != 0)
                             {
-                                Question->VariableName = NULL;
+                                LOOKUP_VARSTORE(Numeric->Question.VarStoreId, Question->VariableName, Question->VariableGuid);
                                 Question->VariableOffset = Numeric->Question.VarStoreInfo.VarOffset;
                             }
                         }
@@ -877,7 +944,7 @@ STATIC EFI_STATUS ParseFormQuestions(
                             
                             if (String->Question.VarStoreId != 0)
                             {
-                                Question->VariableName = NULL;
+                                LOOKUP_VARSTORE(String->Question.VarStoreId, Question->VariableName, Question->VariableGuid);
                                 Question->VariableOffset = String->Question.VarStoreInfo.VarOffset;
                             }
                         }
@@ -1056,6 +1123,15 @@ STATIC EFI_STATUS ParseFormQuestions(
         }
         
         Offset += OpHeader->Length;
+    }
+    
+    // Cleanup: Free allocated varstore names (except default which is static)
+    for (UINTN i = 1; i < VarStoreCount; i++)
+    {
+        if (VarStores[i].Name != NULL)
+        {
+            FreePool(VarStores[i].Name);
+        }
     }
     
     *QuestionList = Questions;
