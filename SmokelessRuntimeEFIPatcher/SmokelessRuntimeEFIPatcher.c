@@ -235,7 +235,6 @@ EFI_STATUS CreateBiosStyleTabbedMenu(SREP_CONTEXT *SrepCtx)
 EFI_STATUS EFIAPI SREPEntry(IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *SystemTable)
 {
     EFI_STATUS Status;
-    EFI_HANDLE_PROTOCOL HandleProtocol;
     EFI_LOADED_IMAGE_PROTOCOL *LoadedImage;
     EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *FileSystem;
     EFI_FILE *Root;
@@ -246,26 +245,48 @@ EFI_STATUS EFIAPI SREPEntry(IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *Syst
     Print(L"AMI BIOS Configuration Editor\n\r");
     
     gBS->SetWatchdogTimer(0, 0, 0, 0);
-    HandleProtocol = SystemTable->BootServices->HandleProtocol;
-    HandleProtocol(ImageHandle, &gEfiLoadedImageProtocolGuid, (void **)&LoadedImage);
-    HandleProtocol(LoadedImage->DeviceHandle, &gEfiSimpleFileSystemProtocolGuid, (void **)&FileSystem);
-    FileSystem->OpenVolume(FileSystem, &Root);
-
-    Status = Root->Open(Root, &LogFile, LOG_FILE_NAME, EFI_FILE_MODE_WRITE | EFI_FILE_MODE_READ | EFI_FILE_MODE_CREATE, 0);
-    if (Status != EFI_SUCCESS)
+    
+    // Get loaded image protocol with error checking
+    Status = gBS->HandleProtocol(ImageHandle, &gEfiLoadedImageProtocolGuid, (void **)&LoadedImage);
+    if (EFI_ERROR(Status))
     {
-        Print(L"Failed on Opening Log File : %r\n\r", Status);
+        Print(L"Failed to get LoadedImage protocol: %r\n\r", Status);
+        return Status;
+    }
+    
+    // Get file system protocol with error checking
+    Status = gBS->HandleProtocol(LoadedImage->DeviceHandle, &gEfiSimpleFileSystemProtocolGuid, (void **)&FileSystem);
+    if (EFI_ERROR(Status))
+    {
+        Print(L"Failed to get FileSystem protocol: %r\n\r", Status);
+        return Status;
+    }
+    
+    // Open volume
+    Status = FileSystem->OpenVolume(FileSystem, &Root);
+    if (EFI_ERROR(Status))
+    {
+        Print(L"Failed to open volume: %r\n\r", Status);
+        return Status;
+    }
+
+    // Open log file
+    Status = Root->Open(Root, &LogFile, LOG_FILE_NAME, EFI_FILE_MODE_WRITE | EFI_FILE_MODE_READ | EFI_FILE_MODE_CREATE, 0);
+    if (EFI_ERROR(Status))
+    {
+        Print(L"Failed to open log file: %r\n\r", Status);
         Root->Close(Root);
         return Status;
     }
+    
     AsciiSPrint(Log, LOG_BUFFER_SIZE, "Welcome to SREP (Smokeless Runtime EFI Patcher) %s\n\r", SREP_VERSION_STRING);
-    LogToFile(LogFile,Log);
+    LogToFile(LogFile, Log);
     AsciiSPrint(Log, LOG_BUFFER_SIZE, "AMI BIOS Configuration Editor - Direct Launch Mode\n\r");
-    LogToFile(LogFile,Log);
+    LogToFile(LogFile, Log);
     
     // Always use BIOS-style interface (direct launch)
     AsciiSPrint(Log, LOG_BUFFER_SIZE, "\n=== BIOS EDITOR MODE: Launching directly ===\n\r");
-    LogToFile(LogFile,Log);
+    LogToFile(LogFile, Log);
     
     // Initialize menu system
     Status = MenuInitialize(&MenuCtx);
