@@ -267,16 +267,36 @@ EFI_STATUS MenuAddTab(
 EFI_STATUS MenuSwitchTab(MENU_CONTEXT *Context, UINTN TabIndex)
 {
     if (Context == NULL || !Context->UseTabMode || Context->Tabs == NULL)
+    {
+        LOG_MENU_ERROR("MenuSwitchTab: Invalid parameters - Context=%p, UseTabMode=%u, Tabs=%p",
+                       Context, Context ? Context->UseTabMode : 0, Context ? Context->Tabs : NULL);
         return EFI_INVALID_PARAMETER;
+    }
     
     if (TabIndex >= Context->TabCount)
+    {
+        LOG_MENU_ERROR("MenuSwitchTab: TabIndex %u >= TabCount %u", TabIndex, Context->TabCount);
         return EFI_INVALID_PARAMETER;
+    }
     
     if (!Context->Tabs[TabIndex].Enabled)
+    {
+        LOG_MENU_ERROR("MenuSwitchTab: Tab %u is not enabled", TabIndex);
         return EFI_ACCESS_DENIED;
+    }
+    
+    if (Context->Tabs[TabIndex].Page == NULL)
+    {
+        LOG_MENU_ERROR("MenuSwitchTab: Tab %u has NULL page", TabIndex);
+        return EFI_NOT_READY;
+    }
     
     Context->CurrentTabIndex = TabIndex;
     Context->CurrentPage = Context->Tabs[TabIndex].Page;
+    
+    LOG_MENU_INFO("Switched to tab %u, CurrentPage=%p, ItemCount=%u",
+                  TabIndex, Context->CurrentPage, 
+                  Context->CurrentPage ? Context->CurrentPage->ItemCount : 0);
     
     // Reset selection to first enabled item
     if (Context->CurrentPage != NULL && Context->CurrentPage->ItemCount > 0)
@@ -835,6 +855,15 @@ EFI_STATUS MenuRun(MENU_CONTEXT *Context, MENU_PAGE *StartPage)
         if (StartPage->ItemCount > 0)
         {
             StartPage->SelectedIndex = FindFirstEnabledItem(StartPage);
+        }
+    }
+    else
+    {
+        // In tab mode, verify CurrentPage is set
+        if (Context->CurrentPage == NULL)
+        {
+            LOG_MENU_ERROR("Tab mode enabled but CurrentPage is NULL - MenuSwitchTab may have failed");
+            return EFI_NOT_READY;
         }
     }
     

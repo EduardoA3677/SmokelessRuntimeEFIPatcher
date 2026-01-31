@@ -2578,16 +2578,44 @@ EFI_STATUS HiiBrowserCreateDynamicTabs(
     }
     
     // Add tabs to menu
+    UINTN ValidTabCount = 0;
     for (UINTN t = 0; t < 6; t++)
     {
         if (TabPages[t] != NULL)
         {
-            MenuAddTab(MenuCtx, t, TabNames[t], TabPages[t]);
+            Status = MenuAddTab(MenuCtx, t, TabNames[t], TabPages[t]);
+            if (EFI_ERROR(Status))
+            {
+                Print(L"Failed to add tab %s: %r\n", TabNames[t], Status);
+                LOG_MENU_ERROR("Failed to add tab %s: %r", TabNames[t], Status);
+            }
+            else
+            {
+                ValidTabCount++;
+                LOG_MENU_INFO("Added tab %s with %u items", TabNames[t], TabPages[t]->ItemCount);
+            }
         }
     }
     
+    if (ValidTabCount == 0)
+    {
+        Print(L"ERROR: No valid tabs were created!\n");
+        LOG_MENU_ERROR("No valid tabs created");
+        return EFI_NOT_FOUND;
+    }
+    
+    Print(L"Created %u tabs\n", ValidTabCount);
+    
     // Start with Main tab
-    MenuSwitchTab(MenuCtx, 0);
+    Status = MenuSwitchTab(MenuCtx, 0);
+    if (EFI_ERROR(Status))
+    {
+        Print(L"Failed to switch to Main tab: %r\n", Status);
+        LOG_MENU_ERROR("Failed to switch to Main tab: %r", Status);
+        return Status;
+    }
+    
+    LOG_MENU_INFO("Switched to Main tab successfully, CurrentPage=%p", MenuCtx->CurrentPage);
     
     Print(L"Dynamic tabs created successfully\n");
     Print(L"  Main: %d forms\n", TabFormCounts[0]);
