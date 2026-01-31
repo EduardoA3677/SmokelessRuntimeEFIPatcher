@@ -1774,7 +1774,10 @@ EFI_STATUS HiiBrowserEditStringQuestion(
     EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *ConOut = gST->ConOut;
     EFI_SIMPLE_TEXT_INPUT_PROTOCOL *ConIn = gST->ConIn;
     
-    // Allocate buffer for string input (max 256 characters)
+    // Allocate buffer for string input
+    // Buffer size: 256 characters (maximum BIOS string length)
+    // Display limit: 44 characters visible in dialog box
+    // Long strings are truncated for display but fully stored
     CHAR16 InputBuffer[256];
     ZeroMem(InputBuffer, sizeof(InputBuffer));
     UINTN InputLength = 0;
